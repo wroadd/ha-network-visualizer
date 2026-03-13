@@ -2,7 +2,7 @@
 
 Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQTT) and **Z-Wave** (via Z-Wave JS) networks on an interactive force-directed graph.
 
-![Network Visualizer Screenshot](https://raw.githubusercontent.com/wroadd/ha-network-visualizer/main/docs/screenshot.png)
+<!-- ![Network Visualizer Screenshot](https://raw.githubusercontent.com/wroadd/ha-network-visualizer/main/docs/screenshot.png) -->
 
 ## Features
 
@@ -142,7 +142,7 @@ The `panel.js` is a self-contained Web Component (`<network-visualizer>`) that:
 - Communicates via HA WebSocket API (`this._hass.connection`)
 - Runs in Shadow DOM (CSS isolation)
 - Loads Zigbee2MQTT data through MQTT publish + HA state_changed events
-- Fetches Z-Wave data via `zwave_js/get_nodes`, `zwave_js/get_node_neighbors`, `zwave_js/get_node_statistics` WS messages
+- Fetches Z-Wave data via `config/device_registry/list` (device registry), `zwave_js/get_node_neighbors`, `zwave_js/get_node_statistics` WS messages
 - Uses `config/area_registry/list` and `config/device_registry/list` for room-based layout
 - Persists node positions and LQI history in `localStorage`
 - Also registers `<network-visualizer-card>` for Lovelace dashboard usage
