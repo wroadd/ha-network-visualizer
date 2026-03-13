@@ -963,29 +963,84 @@ class NetworkVisualizerPanel extends HTMLElement {
   // ─── Z-Wave JS ─────────────────────────────────────────────────────────
   async _loadZwave() {
     try {
-      const entries = await this._callWS("config_entries/get", { type_filter: "hub" });
-      const zwaveEntry = (entries || []).find(e => e.domain === "zwave_js");
-      if (!zwaveEntry) {
-        this._addLog({ level: "info", source: "ZWave", message: "Z-Wave JS integration not found.", time: new Date().toISOString() });
+      // Load Z-Wave devices from the HA device registry
+      const devices = await this._callWS("config/device_registry/list");
+      const zwaveDevices = (devices || []).filter(d =>
+        d.identifiers && d.identifiers.some(([domain]) => domain === "zwave_js")
+      );
+
+      if (zwaveDevices.length === 0) {
+        this._addLog({ level: "info", source: "ZWave", message: "No Z-Wave JS devices found in device registry.", time: new Date().toISOString() });
         return;
       }
-      this._zwaveEntryId = zwaveEntry.entry_id;
 
-      const result = await this._callWS("zwave_js/get_nodes", { entry_id: zwaveEntry.entry_id });
-      const nodes = result?.nodes || (Array.isArray(result) ? result : []);
-      if (nodes.length > 0) {
-        this._processZwaveNodes(nodes, zwaveEntry.entry_id);
-        this._zwaveConnected = true;
-        // Feature 10: Load routing/neighbors
-        await this._loadZwaveRouting(nodes, zwaveEntry.entry_id);
+      // Extract entry_id from the first device's config entries
+      const entryId = zwaveDevices[0]?.config_entries?.[0] || "zwave_js";
+      this._zwaveEntryId = entryId;
+
+      // Get all states to find Z-Wave entity attributes
+      const states = await this._callWS("get_states");
+      const zwaveStates = {};
+      for (const s of (states || [])) {
+        if (s.attributes?.node_id != null) {
+          zwaveStates[s.attributes.node_id] = s;
+        }
       }
 
-      this._unsubZwaveAdded = await this._hass.connection.subscribeEvents(
-        (event) => this._onZwaveEvent(event), "zwave_js_node_added");
-      this._unsubZwaveRemoved = await this._hass.connection.subscribeEvents(
-        (event) => this._onZwaveEvent(event), "zwave_js_node_removed");
-      this._unsubZwaveUpdated = await this._hass.connection.subscribeEvents(
-        (event) => this._onZwaveEvent(event), "zwave_js_value_updated");
+      // Build node list from device registry
+      const nodes = [];
+      for (const d of zwaveDevices) {
+        const zwIdent = d.identifiers.find(([domain]) => domain === "zwave_js");
+        const nodeIdMatch = zwIdent ? String(zwIdent[1]).match(/(\d+)/) : null;
+        const nodeId = nodeIdMatch ? parseInt(nodeIdMatch[1]) : null;
+        const isController = (d.model || "").toLowerCase().includes("controller") ||
+                             (d.manufacturer || "").toLowerCase().includes("controller") ||
+                             nodeId === 1;
+        const stateEntity = nodeId != null ? zwaveStates[nodeId] : null;
+
+        const devId = `zwave_${entryId}_${nodeId || d.id}`;
+        const device = {
+          id: devId, network: "zwave",
+          type: isController ? "zwave-controller" : "zwave-node",
+          label: d.name_by_user || d.name || `Node ${nodeId || "?"}`,
+          node_id: nodeId, manufacturer: d.manufacturer || "",
+          model: d.model || "",
+          is_ready: true, status: stateEntity?.state || "unknown",
+          rssi: stateEntity?.attributes?.rssi || null, lqi: null,
+          last_seen: stateEntity?.last_changed, ha_device_id: d.id,
+          entry_id: entryId,
+        };
+        nodes.push(device);
+        const idx = this._devices.findIndex(x => x.id === devId);
+        if (idx >= 0) this._devices[idx] = device;
+        else this._devices.push(device);
+        this._hasZwave = true;
+        if (device.rssi != null) this._recordLqi(devId, Math.abs(device.rssi));
+      }
+
+      this._zwaveConnected = true;
+      this._rebuildGraph();
+      this._renderDeviceList();
+      this._updateStats();
+      this._updateHealthDashboard();
+      this._addLog({ level: "info", source: "ZWave", message: `${nodes.length} Z-Wave devices loaded from registry`, time: new Date().toISOString() });
+
+      // Feature 10: Try loading routing info (optional, may not be available)
+      await this._loadZwaveRouting(nodes, entryId);
+
+      // Subscribe to Z-Wave events
+      try {
+        this._unsubZwaveAdded = await this._hass.connection.subscribeEvents(
+          (event) => this._onZwaveEvent(event), "zwave_js_node_added");
+      } catch {}
+      try {
+        this._unsubZwaveRemoved = await this._hass.connection.subscribeEvents(
+          (event) => this._onZwaveEvent(event), "zwave_js_node_removed");
+      } catch {}
+      try {
+        this._unsubZwaveUpdated = await this._hass.connection.subscribeEvents(
+          (event) => this._onZwaveEvent(event), "zwave_js_value_updated");
+      } catch {}
 
     } catch (e) {
       console.warn("[NetworkVisualizer] Z-Wave error:", e);
@@ -1028,29 +1083,33 @@ class NetworkVisualizerPanel extends HTMLElement {
     this._zwaveNeighbors = {};
     this._zwaveRouteStats = {};
     for (const n of nodes) {
-      if (n.is_controller_node) continue;
-      try {
-        // Try to get node neighbors for actual mesh topology
-        const result = await this._callWS("zwave_js/get_node_neighbors", {
-          entry_id: entryId, node_id: n.node_id
-        });
-        if (result && result.neighbors) {
-          this._zwaveNeighbors[n.node_id] = result.neighbors;
-        } else if (Array.isArray(result)) {
-          this._zwaveNeighbors[n.node_id] = result;
+      if (n.type === "zwave-controller" || !n.node_id) continue;
+      // Try device_id based neighbor lookup
+      if (n.ha_device_id) {
+        try {
+          const result = await this._callWS("zwave_js/get_node_neighbors", {
+            device_id: n.ha_device_id
+          });
+          if (result && result.neighbors) {
+            this._zwaveNeighbors[n.node_id] = result.neighbors;
+          } else if (Array.isArray(result)) {
+            this._zwaveNeighbors[n.node_id] = result;
+          }
+        } catch {
+          // Not all versions support get_node_neighbors
         }
-      } catch {
-        // Not all versions support get_node_neighbors
+        try {
+          const stats = await this._callWS("zwave_js/get_node_statistics", {
+            device_id: n.ha_device_id
+          });
+          if (stats) this._zwaveRouteStats[n.node_id] = stats;
+        } catch {}
       }
-      try {
-        // Try to get node statistics for route load visualization
-        const stats = await this._callWS("zwave_js/get_node_statistics", {
-          entry_id: entryId, node_id: n.node_id
-        });
-        if (stats) this._zwaveRouteStats[n.node_id] = stats;
-      } catch {}
     }
-    this._rebuildGraph();
+    if (Object.keys(this._zwaveNeighbors).length > 0 || Object.keys(this._zwaveRouteStats).length > 0) {
+      this._rebuildGraph();
+      this._addLog({ level: "info", source: "ZWave", message: `Routing data loaded for ${Object.keys(this._zwaveNeighbors).length} nodes`, time: new Date().toISOString() });
+    }
   }
 
   _onZwaveEvent(event) {
