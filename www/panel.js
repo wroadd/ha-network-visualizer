@@ -15,9 +15,12 @@
  * 10. Z-Wave routing map + route load visualization
  */
 
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 const POSITION_STORAGE_KEY = "network-visualizer-positions";
 const HISTORY_STORAGE_KEY = "network-visualizer-history";
+const SETTINGS_STORAGE_KEY = "network-visualizer-settings";
+const FLOORPLAN_STORAGE_KEY = "network-visualizer-floorplan";
+const FLOORPLAN_ROOMS_KEY = "network-visualizer-floorplan-rooms";
 const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
 const MAX_HISTORY_POINTS = 100;
 
@@ -288,6 +291,68 @@ const STYLES = `
   .route-load-high { stroke: var(--accent-ok) !important; stroke-opacity: 0.8 !important; }
   .route-load-med  { stroke: var(--accent-warn) !important; stroke-opacity: 0.6 !important; }
   .route-load-low  { stroke: var(--accent-error) !important; stroke-opacity: 0.4 !important; }
+
+  /* ── Settings modal ── */
+  .settings-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    z-index: 200; align-items: center; justify-content: center;
+  }
+  .settings-overlay.open { display: flex; }
+  .settings-modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    width: 420px; max-width: 90vw; max-height: 85vh; overflow-y: auto;
+    padding: 20px; box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  }
+  .settings-modal h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+  .settings-group { margin-bottom: 14px; }
+  .settings-group label { display: block; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .settings-input {
+    width: 100%; padding: 7px 10px; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; font-size: var(--text-sm); color: var(--primary-text-color, #e1e1e1); outline: none;
+  }
+  .settings-input:focus { border-color: var(--accent-zigbee); }
+  .settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  /* ── Floor plan view ── */
+  .floorplan-container {
+    position: relative; width: 100%; height: 100%; overflow: hidden;
+    background: var(--surface-2); display: none;
+  }
+  .floorplan-container.active { display: block; }
+  .floorplan-img {
+    max-width: 100%; max-height: 100%; object-fit: contain;
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  }
+  .floorplan-room {
+    position: absolute; padding: 4px 8px; background: rgba(30,41,59,0.85);
+    border: 1px solid var(--border); border-radius: 6px; font-size: 10px;
+    font-weight: 600; color: var(--primary-text-color,#e1e1e1); cursor: move;
+    backdrop-filter: blur(4px); z-index: 10; user-select: none;
+  }
+  .floorplan-device {
+    position: absolute; width: 18px; height: 18px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; cursor: pointer; z-index: 11; transition: transform 0.15s;
+    border: 1.5px solid; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  }
+  .floorplan-device:hover { transform: scale(1.3); z-index: 20; }
+  .floorplan-device.zigbee { background: rgba(34,211,238,0.2); border-color: var(--accent-zigbee); color: var(--accent-zigbee); }
+  .floorplan-device.zwave { background: rgba(167,139,250,0.2); border-color: var(--accent-zwave); color: var(--accent-zwave); }
+  .floorplan-device.coordinator { background: rgba(245,158,11,0.2); border-color: var(--accent-coord); color: var(--accent-coord); }
+  .floorplan-device.stale { background: rgba(239,68,68,0.2); border-color: var(--accent-error); color: var(--accent-error); }
+  .floorplan-upload {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 12px; color: var(--text-muted);
+  }
+  .floorplan-upload-btn {
+    padding: 10px 20px; border-radius: 8px; background: rgba(34,211,238,0.12);
+    border: 1px dashed var(--accent-zigbee); color: var(--accent-zigbee);
+    font-size: 13px; font-weight: 500; cursor: pointer; transition: background 0.2s;
+  }
+  .floorplan-upload-btn:hover { background: rgba(34,211,238,0.22); }
+  .floorplan-toolbar {
+    position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; z-index: 15;
+  }
 
   /* Scrollbar */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -665,6 +730,10 @@ class NetworkVisualizerPanel extends HTMLElement {
     this._mobileLeftOpen = false;
     this._mobileRightOpen = false;
     this._initialized = false;
+    this._settings = {};
+    this._floorplanImage = null;
+    this._floorplanRoomPositions = {};
+    this._viewMode = "graph"; // "graph" or "floorplan"
   }
 
   set panel(panel) {
@@ -678,6 +747,8 @@ class NetworkVisualizerPanel extends HTMLElement {
       this._initialized = true;
       this._loadSavedPositions();
       this._loadLqiHistory();
+      this._loadSettings();
+      this._loadFloorplan();
       this._loadD3().then(() => {
         this._render();
         this._loadAreas();
@@ -752,6 +823,244 @@ class NetworkVisualizerPanel extends HTMLElement {
     if (arr.length > MAX_HISTORY_POINTS) arr.shift();
     try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(this._lqiHistory)); }
     catch {}
+  }
+
+  // ─── Settings ──────────────────────────────────────────────────────────
+  _loadSettings() {
+    try { this._settings = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}"); } catch { this._settings = {}; }
+    // Apply settings to config
+    if (this._settings.z2m_mqtt_topic) this._config.z2m_mqtt_topic = this._settings.z2m_mqtt_topic;
+    if (this._settings.zwavejs_ws_url) this._config.zwavejs_ws_url = this._settings.zwavejs_ws_url;
+  }
+  _saveSettings(settings) {
+    this._settings = { ...this._settings, ...settings };
+    try { localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(this._settings)); } catch {}
+    // Apply to config
+    if (settings.z2m_mqtt_topic != null) this._config.z2m_mqtt_topic = settings.z2m_mqtt_topic;
+    if (settings.zwavejs_ws_url != null) this._config.zwavejs_ws_url = settings.zwavejs_ws_url;
+  }
+
+  _renderSettingsModal() {
+    const s = this._settings;
+    return `
+      <div class="settings-overlay" id="settings-overlay">
+        <div class="settings-modal">
+          <h2>⚙ Settings</h2>
+          <div class="settings-group">
+            <label>Zigbee2MQTT MQTT Topic</label>
+            <input class="settings-input" id="set-z2m-topic" value="${esc(this._config.z2m_mqtt_topic || "zigbee2mqtt")}" placeholder="zigbee2mqtt"/>
+          </div>
+          <div class="settings-group">
+            <label>Z-Wave JS WebSocket URL</label>
+            <input class="settings-input" id="set-zwave-url" value="${esc(this._config.zwavejs_ws_url || "")}" placeholder="ws://localhost:3000"/>
+          </div>
+          <div class="settings-group">
+            <label>View Mode</label>
+            <div style="display:flex;gap:6px;margin-top:4px;">
+              <button class="btn ${this._viewMode === "graph" ? "primary" : ""}" id="set-view-graph">Graph</button>
+              <button class="btn ${this._viewMode === "floorplan" ? "primary" : ""}" id="set-view-floorplan">Floor Plan</button>
+            </div>
+          </div>
+          <div class="settings-group">
+            <label>Floor Plan Image</label>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+              <button class="btn" id="set-upload-floorplan">📁 Upload Image</button>
+              ${this._floorplanImage ? '<button class="btn" id="set-remove-floorplan" style="color:var(--accent-error)">✗ Remove</button>' : ""}
+              <input type="file" id="floorplan-file-input" accept="image/*" style="display:none"/>
+            </div>
+            ${this._floorplanImage ? '<div style="margin-top:8px;font-size:10px;color:var(--accent-ok)">✓ Floor plan image loaded</div>' : ""}
+          </div>
+          <div class="settings-actions">
+            <button class="btn" id="set-cancel">Cancel</button>
+            <button class="btn primary" id="set-save">Save</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ─── Floor Plan ────────────────────────────────────────────────────────
+  _loadFloorplan() {
+    try { this._floorplanImage = localStorage.getItem(FLOORPLAN_STORAGE_KEY) || null; } catch { this._floorplanImage = null; }
+    try { this._floorplanRoomPositions = JSON.parse(localStorage.getItem(FLOORPLAN_ROOMS_KEY) || "{}"); } catch { this._floorplanRoomPositions = {}; }
+  }
+  _saveFloorplanImage(dataUrl) {
+    this._floorplanImage = dataUrl;
+    try { localStorage.setItem(FLOORPLAN_STORAGE_KEY, dataUrl); } catch (e) {
+      this._addLog({ level: "warning", source: "Panel", message: `Floor plan save failed (image too large?): ${e.message}`, time: new Date().toISOString() });
+    }
+  }
+  _saveFloorplanRoomPositions() {
+    try { localStorage.setItem(FLOORPLAN_ROOMS_KEY, JSON.stringify(this._floorplanRoomPositions)); } catch {}
+  }
+
+  _renderFloorplan() {
+    const container = this.shadowRoot.querySelector("#floorplan-container");
+    if (!container) return;
+    container.innerHTML = "";
+
+    if (!this._floorplanImage) {
+      container.innerHTML = `
+        <div class="floorplan-upload">
+          <div style="font-size:48px;opacity:0.3;">🏠</div>
+          <p>No floor plan uploaded yet.</p>
+          <button class="floorplan-upload-btn" id="fp-upload-btn">Upload Floor Plan Image</button>
+          <input type="file" id="fp-file-input" accept="image/*" style="display:none"/>
+        </div>`;
+      const btn = container.querySelector("#fp-upload-btn");
+      const input = container.querySelector("#fp-file-input");
+      btn?.addEventListener("click", () => input?.click());
+      input?.addEventListener("change", (e) => this._handleFloorplanUpload(e));
+      return;
+    }
+
+    // Render floor plan with rooms and devices
+    const img = document.createElement("img");
+    img.className = "floorplan-img";
+    img.src = this._floorplanImage;
+    img.id = "fp-img";
+    container.appendChild(img);
+
+    // Toolbar
+    const toolbar = document.createElement("div");
+    toolbar.className = "floorplan-toolbar";
+    toolbar.innerHTML = `
+      <button class="graph-btn" id="fp-change-img" title="Change image">📁</button>
+      <button class="graph-btn" id="fp-reset-rooms" title="Reset room positions">⊡</button>
+      <input type="file" id="fp-file-input2" accept="image/*" style="display:none"/>`;
+    container.appendChild(toolbar);
+
+    toolbar.querySelector("#fp-change-img")?.addEventListener("click", () => {
+      toolbar.querySelector("#fp-file-input2")?.click();
+    });
+    toolbar.querySelector("#fp-file-input2")?.addEventListener("change", (e) => this._handleFloorplanUpload(e));
+    toolbar.querySelector("#fp-reset-rooms")?.addEventListener("click", () => {
+      this._floorplanRoomPositions = {};
+      this._saveFloorplanRoomPositions();
+      this._renderFloorplan();
+    });
+
+    // Wait for image to load to get dimensions
+    img.onload = () => {
+      const imgRect = img.getBoundingClientRect();
+      const contRect = container.getBoundingClientRect();
+
+      // Render room labels (draggable)
+      const areaNames = Object.values(this._areas);
+      const uniqueAreas = [...new Set(areaNames)];
+      for (const area of uniqueAreas) {
+        const pos = this._floorplanRoomPositions[area] || { x: 50 + Math.random() * 200, y: 50 + Math.random() * 200 };
+        const roomEl = document.createElement("div");
+        roomEl.className = "floorplan-room";
+        roomEl.textContent = area;
+        roomEl.style.left = pos.x + "px";
+        roomEl.style.top = pos.y + "px";
+        container.appendChild(roomEl);
+        this._makeDraggable(roomEl, container, (x, y) => {
+          this._floorplanRoomPositions[area] = { x, y };
+          this._saveFloorplanRoomPositions();
+          this._renderFloorplanDevices(container);
+        });
+      }
+
+      // Render devices
+      this._renderFloorplanDevices(container);
+    };
+  }
+
+  _renderFloorplanDevices(container) {
+    // Remove old device dots
+    container.querySelectorAll(".floorplan-device").forEach(el => el.remove());
+
+    for (const dev of this._devices) {
+      const area = this._getDeviceArea(dev);
+      if (!area || !this._floorplanRoomPositions[area]) continue;
+
+      const roomPos = this._floorplanRoomPositions[area];
+      // Spread devices around room position
+      const devIndex = this._devices.filter(d => this._getDeviceArea(d) === area).indexOf(dev);
+      const angle = (2 * Math.PI * devIndex) / Math.max(1, this._devices.filter(d => this._getDeviceArea(d) === area).length);
+      const spread = 25;
+      const x = roomPos.x + 30 + Math.cos(angle) * spread;
+      const y = roomPos.y + Math.sin(angle) * spread;
+
+      const stale = isStale(dev);
+      const typeClass = stale ? "stale" : dev.type === "coordinator" ? "coordinator" : dev.network;
+      const dot = document.createElement("div");
+      dot.className = `floorplan-device ${typeClass}`;
+      dot.style.left = (x - 9) + "px";
+      dot.style.top = (y - 9) + "px";
+      dot.title = `${dev.label || dev.id}\n${dev.model || ""}\nLQI: ${dev.lqi ?? "–"}`;
+      dot.textContent = dev.type === "coordinator" ? "⬡" : dev.type === "router" ? "⇌" : "•";
+      dot.addEventListener("click", () => this._selectDevice(dev.id));
+      container.appendChild(dot);
+    }
+  }
+
+  _makeDraggable(el, container, onDrop) {
+    let startX, startY, origLeft, origTop;
+    const onMouseDown = (e) => {
+      e.preventDefault();
+      startX = e.clientX || e.touches?.[0]?.clientX;
+      startY = e.clientY || e.touches?.[0]?.clientY;
+      origLeft = parseInt(el.style.left) || 0;
+      origTop = parseInt(el.style.top) || 0;
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      document.addEventListener("touchmove", onMouseMove, { passive: false });
+      document.addEventListener("touchend", onMouseUp);
+    };
+    const onMouseMove = (e) => {
+      e.preventDefault?.();
+      const cx = e.clientX || e.touches?.[0]?.clientX;
+      const cy = e.clientY || e.touches?.[0]?.clientY;
+      const dx = cx - startX, dy = cy - startY;
+      el.style.left = (origLeft + dx) + "px";
+      el.style.top = (origTop + dy) + "px";
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("touchmove", onMouseMove);
+      document.removeEventListener("touchend", onMouseUp);
+      onDrop(parseInt(el.style.left), parseInt(el.style.top));
+    };
+    el.addEventListener("mousedown", onMouseDown);
+    el.addEventListener("touchstart", onMouseDown, { passive: false });
+  }
+
+  _handleFloorplanUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      this._saveFloorplanImage(ev.target.result);
+      this._addLog({ level: "info", source: "Panel", message: `Floor plan uploaded: ${file.name}`, time: new Date().toISOString() });
+      if (this._viewMode === "floorplan") this._renderFloorplan();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  _switchViewMode(mode) {
+    this._viewMode = mode;
+    this._settings.viewMode = mode;
+    try { localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(this._settings)); } catch {}
+    const graphArea = this.shadowRoot.querySelector("#graph-area");
+    let fpContainer = this.shadowRoot.querySelector("#floorplan-container");
+    if (mode === "floorplan") {
+      if (graphArea) graphArea.style.display = "none";
+      if (!fpContainer) {
+        fpContainer = document.createElement("div");
+        fpContainer.className = "floorplan-container active";
+        fpContainer.id = "floorplan-container";
+        graphArea?.parentNode?.insertBefore(fpContainer, graphArea.nextSibling);
+      } else {
+        fpContainer.classList.add("active");
+      }
+      this._renderFloorplan();
+    } else {
+      if (graphArea) graphArea.style.display = "";
+      if (fpContainer) fpContainer.classList.remove("active");
+    }
   }
 
   // ─── HA WebSocket ──────────────────────────────────────────────────────
@@ -1350,6 +1659,7 @@ class NetworkVisualizerPanel extends HTMLElement {
           ${this._renderDetailPanel()}
         </div>
         <div class="mobile-overlay" id="mobile-overlay"></div>
+        ${this._renderSettingsModal()}
       </div>`;
     shadow.appendChild(wrapper.firstElementChild);
 
@@ -1391,6 +1701,7 @@ class NetworkVisualizerPanel extends HTMLElement {
           <span class="status-dot loading" id="zwave-dot" title="Z-Wave JS"></span>
           <button class="btn primary" id="btn-refresh">⟳ Refresh</button>
           <button class="btn small" id="btn-clear-positions" title="Clear saved positions">⊡</button>
+          <button class="btn small" id="btn-settings" title="Settings">⚙</button>
         </div>
       </header>`;
   }
@@ -1890,6 +2201,52 @@ class NetworkVisualizerPanel extends HTMLElement {
       this._renderHistoryChart();
       this._graph?.clearHighlight();
     });
+
+    // Settings button
+    sh.querySelector("#btn-settings")?.addEventListener("click", () => {
+      const overlay = sh.querySelector("#settings-overlay");
+      if (overlay) overlay.classList.add("open");
+    });
+    sh.querySelector("#set-cancel")?.addEventListener("click", () => {
+      sh.querySelector("#settings-overlay")?.classList.remove("open");
+    });
+    sh.querySelector("#settings-overlay")?.addEventListener("click", (e) => {
+      if (e.target.id === "settings-overlay") e.target.classList.remove("open");
+    });
+    sh.querySelector("#set-save")?.addEventListener("click", () => {
+      const topic = sh.querySelector("#set-z2m-topic")?.value || "zigbee2mqtt";
+      const url = sh.querySelector("#set-zwave-url")?.value || "";
+      this._saveSettings({ z2m_mqtt_topic: topic, zwavejs_ws_url: url });
+      sh.querySelector("#settings-overlay")?.classList.remove("open");
+      this._addLog({ level: "info", source: "Panel", message: "Settings saved", time: new Date().toISOString() });
+    });
+    sh.querySelector("#set-view-graph")?.addEventListener("click", () => {
+      this._switchViewMode("graph");
+      sh.querySelector("#settings-overlay")?.classList.remove("open");
+    });
+    sh.querySelector("#set-view-floorplan")?.addEventListener("click", () => {
+      this._switchViewMode("floorplan");
+      sh.querySelector("#settings-overlay")?.classList.remove("open");
+    });
+    sh.querySelector("#set-upload-floorplan")?.addEventListener("click", () => {
+      sh.querySelector("#floorplan-file-input")?.click();
+    });
+    sh.querySelector("#floorplan-file-input")?.addEventListener("change", (e) => {
+      this._handleFloorplanUpload(e);
+      sh.querySelector("#settings-overlay")?.classList.remove("open");
+    });
+    sh.querySelector("#set-remove-floorplan")?.addEventListener("click", () => {
+      this._floorplanImage = null;
+      try { localStorage.removeItem(FLOORPLAN_STORAGE_KEY); } catch {}
+      sh.querySelector("#settings-overlay")?.classList.remove("open");
+      if (this._viewMode === "floorplan") this._renderFloorplan();
+      this._addLog({ level: "info", source: "Panel", message: "Floor plan removed", time: new Date().toISOString() });
+    });
+
+    // Apply saved view mode
+    if (this._settings.viewMode === "floorplan") {
+      setTimeout(() => this._switchViewMode("floorplan"), 100);
+    }
 
     // Touch: swipe to open left panel
     let touchStartX = 0;
