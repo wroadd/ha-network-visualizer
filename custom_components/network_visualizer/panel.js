@@ -878,39 +878,123 @@ class NetworkVisualizerPanel extends HTMLElement {
     try {
       const states = await this._callWS("get_states");
       this._addLog({ level: "debug", source: "Z2M", message: `get_states returned ${(states || []).length} entities`, time: new Date().toISOString() });
-      const z2mEntities = (states || []).filter(s =>
-        s.attributes && s.attributes.linkquality != null &&
-        (s.attributes.manufacturer != null || (s.entity_id || "").includes("zigbee") ||
-         s.attributes.friendly_name)
+
+      // Strategy 1: Find Z2M devices from device registry (most reliable)
+      let registryDevices = [];
+      try {
+        const allDevices = await this._callWS("config/device_registry/list");
+        registryDevices = (allDevices || []).filter(d =>
+          d.identifiers && d.identifiers.some(([domain, id]) =>
+            (domain === "mqtt" && typeof id === "string" && id.includes("zigbee2mqtt")) ||
+            domain === "zigbee2mqtt"
+          )
+        );
+        this._addLog({ level: "debug", source: "Z2M", message: `Device registry: ${registryDevices.length} Z2M devices found`, time: new Date().toISOString() });
+      } catch (e) {
+        this._addLog({ level: "warning", source: "Z2M", message: `Device registry failed: ${e.message || e}`, time: new Date().toISOString() });
+      }
+
+      // Strategy 2: Find linkquality sensor entities (sensor.xxx_linkquality)
+      const lqiSensors = (states || []).filter(s =>
+        (s.entity_id || "").includes("linkquality") && s.state != null && s.state !== "unavailable"
       );
-      this._addLog({ level: "debug", source: "Z2M", message: `Found ${z2mEntities.length} entities with linkquality attribute`, time: new Date().toISOString() });
+      this._addLog({ level: "debug", source: "Z2M", message: `Found ${lqiSensors.length} linkquality sensor entities`, time: new Date().toISOString() });
+
+      // Build LQI map from linkquality sensors: device_id -> lqi value
+      const lqiByDeviceName = {};
+      for (const s of lqiSensors) {
+        // Extract device name from entity_id like "sensor.device_name_linkquality"
+        const match = s.entity_id.match(/^sensor\.(.+)_linkquality$/);
+        if (match) {
+          lqiByDeviceName[match[1].toLowerCase()] = parseLQI(s.state);
+        }
+      }
+
+      // Strategy 3: Also check entities with linkquality attribute (old Z2M style)
+      const z2mAttrEntities = (states || []).filter(s =>
+        s.attributes && s.attributes.linkquality != null
+      );
+      this._addLog({ level: "debug", source: "Z2M", message: `Found ${z2mAttrEntities.length} entities with linkquality attribute`, time: new Date().toISOString() });
+
       const seen = new Set();
       const devices = [];
-      for (const s of z2mEntities) {
+
+      // Process registry devices first (most reliable)
+      if (registryDevices.length > 0) {
+        // Get entity registry for device->entity mapping
+        let entityRegistry = [];
+        try {
+          entityRegistry = await this._callWS("config/entity_registry/list");
+        } catch { /* older HA versions may not have this */ }
+
+        for (const d of registryDevices) {
+          const mqttIdent = d.identifiers.find(([domain, id]) =>
+            (domain === "mqtt" && typeof id === "string" && id.includes("zigbee2mqtt")) ||
+            domain === "zigbee2mqtt"
+          );
+          const ieee = mqttIdent ? String(mqttIdent[1]).replace("zigbee2mqtt_", "") : "";
+          const devName = (d.name_by_user || d.name || "").toLowerCase().replace(/[^a-z0-9]/g, "_");
+          const isCoord = (d.model || "").toLowerCase().includes("coordinator") ||
+                          (d.name || "").toLowerCase().includes("coordinator");
+          const isRouter = (d.model || "").toLowerCase().includes("router");
+
+          // Find LQI from linkquality sensors
+          let lqi = lqiByDeviceName[devName] || null;
+          // Also try matching with normalized name variations
+          if (lqi == null) {
+            for (const [key, val] of Object.entries(lqiByDeviceName)) {
+              if (key.includes(devName) || devName.includes(key)) { lqi = val; break; }
+            }
+          }
+
+          const devId = `z2m_${ieee || d.id}`;
+          if (seen.has(devId)) continue;
+          seen.add(devId);
+
+          const device = {
+            id: devId, network: "zigbee",
+            type: isCoord ? "coordinator" : isRouter ? "router" : "end-device",
+            label: d.name_by_user || d.name || ieee,
+            ieee, model: d.model || "", manufacturer: d.manufacturer || "",
+            lqi, last_seen: null, ha_device_id: d.id,
+          };
+          devices.push(device);
+          if (lqi != null) this._recordLqi(devId, lqi);
+          this._hasZigbee = true;
+        }
+      }
+
+      // Also process entities with linkquality attribute (old style)
+      for (const s of z2mAttrEntities) {
         const key = s.attributes.ieee_address || s.attributes.friendly_name || s.entity_id;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const devId = `z2m_${key}`;
+        if (seen.has(devId)) continue;
+        seen.add(devId);
         const lqi = parseLQI(s.attributes.linkquality);
         const dev = {
-          id: `z2m_${key}`, network: "zigbee", type: "end-device",
+          id: devId, network: "zigbee", type: "end-device",
           label: s.attributes.friendly_name || s.entity_id,
           ieee: s.attributes.ieee_address || "",
           model: s.attributes.model || "", manufacturer: s.attributes.manufacturer || "",
           lqi, last_seen: s.last_changed, entity_id: s.entity_id, state: s.state,
         };
         devices.push(dev);
-        this._recordLqi(dev.id, lqi);
+        this._recordLqi(devId, lqi);
         this._hasZigbee = true;
       }
+
       if (devices.length > 0) this._mergeDevices(devices);
 
+      // Check for bridge sensor with full device list
       const bridgeSensor = (states || []).find(s =>
-        s.entity_id.includes("z2m") && s.entity_id.includes("bridge") ||
-        s.attributes?.devices != null && s.attributes?.type === "zigbee"
+        (s.entity_id.includes("z2m") && s.entity_id.includes("bridge")) ||
+        (s.entity_id.includes("zigbee2mqtt") && s.entity_id.includes("bridge")) ||
+        (s.attributes?.devices != null && s.attributes?.type === "zigbee")
       );
       if (bridgeSensor?.attributes?.devices) this._processZ2MDevices(bridgeSensor.attributes.devices);
     } catch (e) {
       console.warn("[NetworkVisualizer] loadZ2MFromStates error:", e);
+      this._addLog({ level: "error", source: "Z2M", message: `loadZ2MFromStates error: ${e.message || e}`, time: new Date().toISOString() });
     }
   }
 
