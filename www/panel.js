@@ -866,7 +866,12 @@ class NetworkVisualizerPanel extends HTMLElement {
 
   async _publishMQTT(topic, payload) {
     try {
-      await this._callWS("mqtt/publish", { topic, payload });
+      // Use call_service which is more universally available than mqtt/publish
+      await this._callWS("call_service", {
+        domain: "mqtt",
+        service: "publish",
+        service_data: { topic, payload: payload || "" },
+      });
       return true;
     } catch (e) {
       this._addLog({ level: "warning", source: "MQTT", message: `MQTT publish failed (${topic}): ${e.message || e}`, time: new Date().toISOString() });
