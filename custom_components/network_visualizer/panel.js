@@ -845,31 +845,45 @@ class NetworkVisualizerPanel extends HTMLElement {
   // ─── Zigbee2MQTT ───────────────────────────────────────────────────────
   async _subscribeZ2M() {
     const baseTopic = (this._config.z2m_mqtt_topic || "zigbee2mqtt").replace(/\/$/, "");
+    this._addLog({ level: "debug", source: "Z2M", message: `Loading Z2M data (topic: ${baseTopic})...`, time: new Date().toISOString() });
     try {
-      await this._publishMQTT(`${baseTopic}/bridge/request/devices`, "");
-      await this._publishMQTT(`${baseTopic}/bridge/request/networkmap`, JSON.stringify({ type: "raw", routes: true }));
+      const mqttOk1 = await this._publishMQTT(`${baseTopic}/bridge/request/devices`, "");
+      const mqttOk2 = await this._publishMQTT(`${baseTopic}/bridge/request/networkmap`, JSON.stringify({ type: "raw", routes: true }));
+      if (!mqttOk1 && !mqttOk2) {
+        this._addLog({ level: "warning", source: "Z2M", message: "MQTT not available — loading from HA states only", time: new Date().toISOString() });
+      }
       await this._loadZ2MFromStates();
-      this._z2mConnected = true;
+      const z2mCount = this._devices.filter(d => d.network === "zigbee").length;
+      this._addLog({ level: "info", source: "Z2M", message: `Z2M loading done. ${z2mCount} Zigbee devices found.`, time: new Date().toISOString() });
+      this._z2mConnected = z2mCount > 0 || mqttOk1;
     } catch (e) {
       console.warn("[NetworkVisualizer] Z2M error:", e);
-      this._addLog({ level: "warning", source: "Panel", message: `Z2M connection failed: ${e.message || e}`, time: new Date().toISOString() });
+      this._addLog({ level: "warning", source: "Z2M", message: `Z2M connection failed: ${e.message || e}`, time: new Date().toISOString() });
       this._z2mConnected = false;
     }
     this._updateStatusDots();
   }
 
   async _publishMQTT(topic, payload) {
-    try { await this._callWS("mqtt/publish", { topic, payload }); } catch {}
+    try {
+      await this._callWS("mqtt/publish", { topic, payload });
+      return true;
+    } catch (e) {
+      this._addLog({ level: "warning", source: "MQTT", message: `MQTT publish failed (${topic}): ${e.message || e}`, time: new Date().toISOString() });
+      return false;
+    }
   }
 
   async _loadZ2MFromStates() {
     try {
       const states = await this._callWS("get_states");
+      this._addLog({ level: "debug", source: "Z2M", message: `get_states returned ${(states || []).length} entities`, time: new Date().toISOString() });
       const z2mEntities = (states || []).filter(s =>
         s.attributes && s.attributes.linkquality != null &&
         (s.attributes.manufacturer != null || (s.entity_id || "").includes("zigbee") ||
          s.attributes.friendly_name)
       );
+      this._addLog({ level: "debug", source: "Z2M", message: `Found ${z2mEntities.length} entities with linkquality attribute`, time: new Date().toISOString() });
       const seen = new Set();
       const devices = [];
       for (const s of z2mEntities) {
