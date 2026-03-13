@@ -964,7 +964,16 @@ class NetworkVisualizerPanel extends HTMLElement {
   async _loadZwave() {
     try {
       // Load Z-Wave devices from the HA device registry
-      const devices = await this._callWS("config/device_registry/list");
+      this._addLog({ level: "debug", source: "ZWave", message: "Loading device registry...", time: new Date().toISOString() });
+      let devices;
+      try {
+        devices = await this._callWS("config/device_registry/list");
+      } catch (regErr) {
+        this._addLog({ level: "error", source: "ZWave", message: `Device registry failed: ${regErr.message || regErr}`, time: new Date().toISOString() });
+        throw regErr;
+      }
+      this._addLog({ level: "debug", source: "ZWave", message: `Device registry returned ${(devices || []).length} devices`, time: new Date().toISOString() });
+
       const zwaveDevices = (devices || []).filter(d =>
         d.identifiers && d.identifiers.some(([domain]) => domain === "zwave_js")
       );
@@ -973,6 +982,8 @@ class NetworkVisualizerPanel extends HTMLElement {
         this._addLog({ level: "info", source: "ZWave", message: "No Z-Wave JS devices found in device registry.", time: new Date().toISOString() });
         return;
       }
+
+      this._addLog({ level: "info", source: "ZWave", message: `Found ${zwaveDevices.length} Z-Wave devices in registry`, time: new Date().toISOString() });
 
       // Extract entry_id from the first device's config entries
       const entryId = zwaveDevices[0]?.config_entries?.[0] || "zwave_js";
@@ -1263,7 +1274,7 @@ class NetworkVisualizerPanel extends HTMLElement {
           </svg>
         </div>
         <div>
-          <div class="header-title">Network Visualizer</div>
+          <div class="header-title">Network Visualizer <span style="font-size:10px;color:var(--text-muted);font-weight:400;">v${VERSION}</span></div>
           <div class="header-subtitle">Zigbee & Z-Wave topology</div>
         </div>
         <div class="header-spacer"></div>

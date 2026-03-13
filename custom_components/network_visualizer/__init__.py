@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -41,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config={
             "_panel_custom": {
                 "name": PANEL_NAME,
-                "module_url": "/local/network-visualizer/panel.js",
+                "module_url": f"/local/network-visualizer/panel.js?v={int(time.time())}",
                 "config": {
                     "z2m_mqtt_topic": entry.data.get("z2m_mqtt_topic", "zigbee2mqtt"),
                     "zwavejs_ws_url": entry.data.get("zwavejs_ws_url", ""),
