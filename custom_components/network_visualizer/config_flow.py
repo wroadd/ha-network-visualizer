@@ -10,14 +10,14 @@ from homeassistant.data_entry_flow import FlowResult
 
 from . import DOMAIN
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Optional("panel_title", default="Network Visualizer"): str,
-        vol.Optional("panel_icon", default="mdi:lan"): str,
-        vol.Optional("z2m_mqtt_topic", default="zigbee2mqtt"): str,
-        vol.Optional("zwavejs_ws_url", default=""): str,
-    }
-)
+
+def _get_zwave_ws_url(hass: HomeAssistant) -> str:
+    """Try to detect Z-Wave JS WebSocket URL from existing config entries."""
+    for entry in hass.config_entries.async_entries("zwave_js"):
+        url = entry.data.get("url", "")
+        if url:
+            return url
+    return ""
 
 
 class NetworkVisualizerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -38,11 +38,19 @@ class NetworkVisualizerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data=user_input,
             )
 
+        # Auto-detect Z-Wave JS WebSocket URL if installed
+        zwave_url = _get_zwave_ws_url(self.hass)
+
+        schema = vol.Schema(
+            {
+                vol.Optional("panel_title", default="Network Visualizer"): str,
+                vol.Optional("panel_icon", default="mdi:lan"): str,
+                vol.Optional("z2m_mqtt_topic", default="zigbee2mqtt"): str,
+                vol.Optional("zwavejs_ws_url", default=zwave_url): str,
+            }
+        )
+
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            description_placeholders={
-                "z2m_topic_hint": "zigbee2mqtt",
-                "zwavejs_hint": "ws://localhost:3000",
-            },
+            data_schema=schema,
         )

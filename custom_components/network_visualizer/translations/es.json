@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Visualizador de Red Zigbee y Z-Wave",
+        "description": "Configurar el panel de visualización de red.",
+        "data": {
+          "panel_title": "Título del panel",
+          "panel_icon": "Icono del panel (MDI)",
+          "z2m_mqtt_topic": "Topic base de Zigbee2MQTT",
+          "zwavejs_ws_url": "URL WebSocket de Z-Wave JS UI (ej. ws://localhost:3000)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Ya está configurado. Solo es posible una configuración."
+    }
+  }
+}

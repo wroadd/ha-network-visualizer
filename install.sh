@@ -9,17 +9,14 @@ HA_CONFIG="${1:-/config}"
 echo "=== Network Visualizer telepítő ==="
 echo "HA config könyvtár: $HA_CONFIG"
 
-# custom_components
+# custom_components (panel.js is now bundled inside the component)
 DEST_CC="$HA_CONFIG/custom_components/network_visualizer"
 echo "→ custom_components másolása: $DEST_CC"
 mkdir -p "$DEST_CC"
 cp -r "$(dirname "$0")/custom_components/network_visualizer/." "$DEST_CC/"
 
-# www panel
-DEST_WWW="$HA_CONFIG/www/network-visualizer"
-echo "→ Panel JS másolása: $DEST_WWW"
-mkdir -p "$DEST_WWW"
-cp "$(dirname "$0")/www/panel.js" "$DEST_WWW/panel.js"
+echo ""
+echo "ℹ  A panel JS automatikusan másolódik a www/ alá az integráció indulásakor."
 
 echo ""
 echo "✓ Telepítés kész!"

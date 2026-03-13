@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.frontend import async_register_built_in_panel, async_remove_panel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,14 +24,16 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Network Visualizer from a config entry."""
-    # Install panel JS files to www directory
+    # Install panel JS files to www directory (non-blocking)
     from .panel_installer import install_panel_files
-    install_panel_files(hass)
+    await hass.async_add_executor_job(install_panel_files, hass)
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry.data
 
     # Register the custom panel
-    hass.components.frontend.async_register_built_in_panel(
+    async_register_built_in_panel(
+        hass,
         component_name="custom",
         sidebar_title=entry.data.get("panel_title", PANEL_TITLE),
         sidebar_icon=entry.data.get("panel_icon", PANEL_ICON),
@@ -55,6 +57,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    hass.components.frontend.async_remove_panel(PANEL_URL)
+    async_remove_panel(hass, PANEL_URL)
     hass.data[DOMAIN].pop(entry.entry_id, None)
     return True

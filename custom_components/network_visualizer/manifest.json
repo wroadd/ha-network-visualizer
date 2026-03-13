@@ -1,13 +1,13 @@
 {
   "domain": "network_visualizer",
   "name": "Zigbee & Z-Wave Network Visualizer",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "documentation": "https://github.com/wroadd/ha-network-visualizer",
   "issue_tracker": "https://github.com/wroadd/ha-network-visualizer/issues",
   "codeowners": ["@wroadd"],
   "requirements": [],
-  "dependencies": [],
+  "dependencies": ["frontend"],
   "config_flow": true,
-  "iot_class": "local_polling",
-  "integration_type": "hub"
+  "iot_class": "local_push",
+  "integration_type": "service"
 }

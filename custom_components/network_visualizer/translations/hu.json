@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Zigbee & Z-Wave Hálózat Vizualizáló",
+        "description": "A hálózat vizualizáló panel konfigurálása.",
+        "data": {
+          "panel_title": "Panel cím",
+          "panel_icon": "Panel ikon (MDI)",
+          "z2m_mqtt_topic": "Zigbee2MQTT alap topic",
+          "zwavejs_ws_url": "Z-Wave JS UI WebSocket URL (pl. ws://localhost:3000)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Már konfigurálva van. Csak egy konfiguráció lehetséges."
+    }
+  }
+}
