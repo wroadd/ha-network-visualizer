@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Zigbee & Z-Wave Network Visualizer",
+        "description": "Configure the network visualizer panel.",
+        "data": {
+          "panel_title": "Panel title",
+          "panel_icon": "Panel icon (MDI)",
+          "z2m_mqtt_topic": "Zigbee2MQTT base topic",
+          "zwavejs_ws_url": "Z-Wave JS UI WebSocket URL (e.g. ws://localhost:3000)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured. Only a single configuration possible."
+    }
+  }
+}

@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Update manifest version
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" \
+            custom_components/network_visualizer/manifest.json
+          echo "Updated manifest.json to version ${VERSION}"
+          cat custom_components/network_visualizer/manifest.json
+
+      - name: Create integration zip
+        run: |
+          cd custom_components
+          zip -r ../network_visualizer.zip network_visualizer/
+          cd ..
+          echo "Zip size: $(du -sh network_visualizer.zip)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.version.outputs.VERSION }}"
+          tag_name: ${{ github.ref_name }}
+          files: network_visualizer.zip
+          generate_release_notes: true
+          body: |
+            ## Zigbee & Z-Wave Network Visualizer v${{ steps.version.outputs.VERSION }}
+
+            ### Telepítés
+            HACS → Custom Repositories → `https://github.com/${{ github.repository }}` → Integration
+
+            Vagy manuálisan: töltsd le a `network_visualizer.zip`-et és csomagold ki a `custom_components/` alá.
