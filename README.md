@@ -1,43 +1,76 @@
 # Zigbee & Z-Wave Network Visualizer
 
-Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQTT) and **Z-Wave** (via Z-Wave JS) networks on an interactive force-directed graph.
+Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQTT) and **Z-Wave** (via Z-Wave JS) networks with multiple interactive graph types.
 
 <!-- ![Network Visualizer Screenshot](https://raw.githubusercontent.com/wroadd/ha-network-visualizer/main/docs/screenshot.png) -->
 
 ## Features
 
-### Core
-- **Interactive D3.js force-directed network graph** — drag, zoom, pan
-- **Zigbee topology** — coordinator, routers, end devices, LQI values on edges
-- **Z-Wave topology** — controller and nodes with RSSI indicators
-- **Device list sidebar** — search, filter by network type
-- **Detail panel** — IEEE address, manufacturer, model, security class, last seen
-- **Event log** — real-time Z2M and Z-Wave event log
-- **Statistics bar** — Zigbee/Z-Wave device count, routers, coordinators
-- **Native dark mode** — follows Home Assistant theme
-- **Click to highlight** — selected device connections highlighted
+### Core (v3.0.0)
+- **Three graph visualization types** — Force, Radial Tree, and Organic
+- **Separate Zigbee / Z-Wave tabs** — dedicated tab for each protocol
+- **Graph type selector** — switch between Force / Radial / Organic in the header
+- **Zigbee topology** — coordinator, routers, end devices, LQI-colored links
+- **Z-Wave topology** — controller and nodes
+- **Search** — find and highlight devices by name
+- **Tooltip** — hover for device details (manufacturer, model, area, LQI, IEEE)
+- **Statistics bar** — device count by type, average LQI
+- **Legend** — color-coded device types and LQI scale
+- **Zoom controls** — zoom in/out, reset
+- **Dark theme** — built-in dark UI
+- **Click to highlight** — selected device and its connections highlighted
+- **Persistent settings** — active tab and graph type saved in localStorage
 
-### v2.0.0 — New Features
+### Graph Types
 
-1. **D3.js Local Bundle (Offline Support)** — D3.js v7 is bundled locally in the integration; no CDN dependency required. Falls back to CDN if local file is unavailable.
+#### Force Graph (MeshGraphViewer inspired)
+- D3.js force simulation with draggable nodes
+- LQI color gradient on links (red → green)
+- Area-based convex hull grouping
+- Arrow markers for link direction
+- Node position persistence in localStorage
 
-2. **Network Health Dashboard** — Top-level health indicators showing average LQI, weak link count, offline device count, and overall network health percentage with color-coded status.
+#### Radial Tree (Alarm.com inspired)
+- BFS tree layout from coordinator outward
+- Concentric hop depth rings with labels
+- Radial curved links colored by LQI
+- LQI badges on nodes
+- Coordinator at center
 
-3. **Real-time LQI/RSSI Updates** — Subscribes to `state_changed` events and updates device signal quality in real-time without requiring manual refresh.
+#### Organic Graph (Homey inspired)
+- Dark neon background (#080c14)
+- Neon color scheme per area (ff3366, ffaa00, b388ff, 00e676, 40c4ff)
+- SVG glow filter on nodes
+- Curved arc links
+- Pulsing animation on coordinator/controller
+- Softer force parameters for organic feel
 
-4. **Room-based Layout (Area Registry)** — Integrates with Home Assistant's area registry to group devices by room. Devices assigned to areas are visually clustered together with convex hull overlays and area labels.
+### Changelog
 
-5. **Full Mobile Responsiveness** — Hamburger menu for device list, slide-out panels, touch swipe gestures to open/close sidebars, and adaptive layout for screens under 900px.
+#### v3.0.0 — Complete Rewrite
+- **3 graph types**: Force (MeshGraphViewer), Radial (Alarm.com), Organic (Homey)
+- **Separate Zigbee / Z-Wave tabs** (removed "All" tab)
+- **Graph type selector** in header bar
+- **Removed**: Floor plan view, settings modal, Lovelace card, D3 local bundle, event log, device list sidebar
+- **Simplified architecture**: 3 renderer classes + main Web Component (~680 lines)
+- **localStorage persistence**: node positions, active tab, graph type
 
-6. **Graph Position Saving (localStorage)** — Dragged node positions are persisted to `localStorage`. When you reload, devices stay where you placed them. A "Clear positions" button resets the layout.
+#### v2.1.0 — Settings & Floor Plan
+- Settings modal (⚙) in header
+- Floor plan upload with draggable room localization
+- View mode toggle (Graph / Floor Plan)
 
-7. **Device Dropout Indicators on Graph** — Devices that haven't reported in over 1 hour are marked directly on the graph with a pulsing red ring, red fill, and ✗ icon. Stale devices also appear dimmed in the device list with a red indicator dot.
-
-8. **Historical LQI/RSSI Chart** — A new "History" tab in the detail panel shows a time-series SVG chart of LQI/RSSI values with trend indicators (↑↓→). Data is accumulated in `localStorage` (up to 100 data points per device).
-
-9. **Lovelace Card Version** — Use the visualizer as a dashboard card! Add `network-visualizer-card` to any Lovelace dashboard. Configurable height and auto-registered in the card picker.
-
-10. **Z-Wave Routing Map + Route Load Visualization** — Fetches actual Z-Wave mesh topology via `zwave_js/get_node_neighbors` and node statistics via `zwave_js/get_node_statistics`. Links are colored and sized by route load (TX+RX command volume). Detail panel shows per-node route statistics including TX/RX counts, dropped packets, and last RSSI.
+#### v2.0.0 — Major Feature Update
+- D3.js local bundle (offline support)
+- Network health dashboard
+- Real-time LQI/RSSI updates
+- Room-based area layout with convex hulls
+- Mobile responsiveness
+- Graph position saving
+- Device dropout indicators
+- Historical LQI/RSSI chart
+- Lovelace card version
+- Z-Wave routing map + route load visualization
 
 ## Data Sources
 
@@ -118,34 +151,29 @@ custom_components/
   network_visualizer/
     __init__.py          # HA integration setup, panel registration
     config_flow.py       # UI configuration flow
-    manifest.json        # Integration metadata
-    panel_installer.py   # Panel JS + D3.js copy to www/ (automatic)
-    panel.js             # Main visualizer panel (Web Component + Lovelace card)
-    d3.min.js            # D3.js v7 local bundle (offline support)
+    manifest.json        # Integration metadata (v3.0.0)
+    panel_installer.py   # Panel JS copy to www/ (automatic)
+    panel.js             # Main visualizer panel (Web Component)
     strings.json         # UI strings
     brand/
       icon.png           # Integration icon
     translations/
       en.json            # English
-      hu.json            # Hungarian
-      de.json            # German
-      es.json            # Spanish
-      fr.json            # French
 www/
-  panel.js               # Panel JS (manual install fallback)
+  panel.js               # Panel JS (served by HA frontend)
 ```
 
 ## Development Notes
 
 The `panel.js` is a self-contained Web Component (`<network-visualizer>`) that:
-- Loads D3.js v7 locally (with CDN fallback) for graph rendering
-- Communicates via HA WebSocket API (`this._hass.connection`)
+- Loads D3.js v7 from CDN for graph rendering
+- Communicates via HA WebSocket API (`this._hass.callWS()`)
 - Runs in Shadow DOM (CSS isolation)
-- Loads Zigbee2MQTT data through MQTT publish + HA state_changed events
-- Fetches Z-Wave data via `config/device_registry/list` (device registry), `zwave_js/get_node_neighbors`, `zwave_js/get_node_statistics` WS messages
-- Uses `config/area_registry/list` and `config/device_registry/list` for room-based layout
-- Persists node positions and LQI history in `localStorage`
-- Also registers `<network-visualizer-card>` for Lovelace dashboard usage
+- Contains 3 renderer classes: `ForceGraphRenderer`, `RadialTreeRenderer`, `OrganicGraphRenderer`
+- Loads Zigbee devices from HA device registry (`mqtt`/`zigbee2mqtt_*` identifiers)
+- Loads Z-Wave devices from HA device registry (`zwave_js` identifiers)
+- Uses `config/area_registry/list` for room-based grouping
+- Persists node positions and UI settings in `localStorage`
 
 ## Supported Languages
 
