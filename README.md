@@ -45,18 +45,18 @@ Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQ
 - Pulsing animation on coordinator/controller
 - Softer force parameters for organic feel
 
-#### Grid / Routing Table (Homey Developer Tools inspired)
-- Device list table with columns: #, Device, Route, LQI (Zigbee), Neighbors, Area
-- Route visualization — hop chain with pill badges showing path to coordinator/controller
-- Direct connections marked with green `→ Direct` badge
-- Multi-hop routes shown as `📡 Router → ⭐ Coordinator` chain
-- LQI column with color-coded pill badges (green = good, red = poor) — Zigbee only
-- Neighbor list with compact badges showing connected device IDs/names
-- Device icon with type-colored border and manufacturer/model subtitle
-- Coordinator/controller rows highlighted with accent background
-- Sticky header for scrolling
-- Row hover highlight
-- Protocol-aware columns (LQI shown only for Zigbee tab)
+#### Grid / Routing Table (Homey Z-Wave Developer Tools inspired)
+- Dark background (#1b1b20) CSS Grid layout — no HTML tables
+- **NodeID Badge**: 24×24px rounded square with pastel/vivid color from `BADGE_PALETTE`, dark text
+- **Route column**: "Last working route" label followed by a badge chain connected by dashes (`-`), each badge showing the hop's NodeID in matching palette color
+- **Protocol-aware columns**:
+  - *Zigbee*: NodeID · Device · Route · LQI · Neighbors · Area
+  - *Z-Wave*: NodeID · Device · Route · Tx Queued · Tx Sent · Tx Error · Rx · Flags
+- **Coordinator / Controller** (Node 1): no stats, no route, no kebab menu
+- **Kebab menu** (⋮) at row end for per-device actions
+- Sticky uppercase header row
+- Row hover highlight (`#25252b`)
+- Responsive Inter/Roboto/system-ui font stack
 
 ### Changelog
 

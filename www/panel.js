@@ -59,26 +59,21 @@ const NV_CSS = `
 .node-label{font-size:10px;fill:var(--nv-text);text-anchor:middle;pointer-events:none;user-select:none}
 .link-label{font-size:9px;fill:var(--nv-text-dim);text-anchor:middle;pointer-events:none}
 .hull{fill-opacity:.08;stroke-opacity:.3;stroke-width:1.5}
-.nv-grid-wrap{width:100%;height:100%;overflow:auto;background:var(--nv-bg);padding:8px}
-.nv-rtable{border-collapse:separate;border-spacing:0;font-size:12px;width:100%}
-.nv-rtable thead th{position:sticky;top:0;z-index:2;background:var(--nv-surface);color:var(--nv-text-dim);font-weight:600;padding:8px 10px;text-align:left;border-bottom:2px solid var(--nv-border);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-.nv-rtable tbody tr{transition:background .15s}
-.nv-rtable tbody tr:hover{background:rgba(79,195,247,.08)}
-.nv-rtable tbody tr.coord-row{background:rgba(255,152,0,.06)}
-.nv-rtable td{padding:6px 10px;border-bottom:1px solid var(--nv-border);vertical-align:middle}
-.nv-rtable .rt-id{color:var(--nv-text-dim);font-size:11px;font-weight:600;min-width:32px;text-align:center}
-.nv-rtable .rt-device{display:flex;align-items:center;gap:8px}
-.nv-rtable .rt-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
-.nv-rtable .rt-name{font-weight:500;color:var(--nv-text)}
-.nv-rtable .rt-model{font-size:10px;color:var(--nv-text-dim)}
-.nv-rtable .rt-route{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
-.nv-rtable .rt-hop{display:inline-flex;align-items:center;gap:2px;background:var(--nv-surface);border:1px solid var(--nv-border);border-radius:12px;padding:2px 8px;font-size:10px;white-space:nowrap}
-.nv-rtable .rt-hop.direct{border-color:var(--nv-accent);color:var(--nv-accent)}
-.nv-rtable .rt-arrow{color:var(--nv-text-dim);font-size:10px}
-.nv-rtable .rt-lqi{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;min-width:36px;text-align:center}
-.nv-rtable .rt-neighbors{font-size:11px;color:var(--nv-text-dim)}
-.nv-rtable .rt-nbr-badge{display:inline-block;background:var(--nv-surface);border:1px solid var(--nv-border);border-radius:4px;padding:1px 4px;font-size:9px;margin:1px}
-.nv-rtable .rt-area{font-size:11px;color:var(--nv-text-dim);font-style:italic}
+.nv-grid-wrap{width:100%;height:100%;overflow:auto;background:#1b1b20;padding:16px 24px;font-family:Inter,Roboto,'Segoe UI',system-ui,sans-serif;font-size:13px;color:#e0e0e0}
+.nv-grid-header{display:grid;grid-template-columns:50px 250px 1fr 80px 80px 90px 60px 1fr 30px;gap:16px;padding-bottom:12px;border-bottom:1px solid #333;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.3px;align-items:end;position:sticky;top:0;z-index:2;background:#1b1b20}
+.nv-grid-row{display:grid;grid-template-columns:50px 250px 1fr 80px 80px 90px 60px 1fr 30px;gap:16px;padding:14px 0;border-bottom:1px solid #333;align-items:center;transition:background .15s}
+.nv-grid-row:hover{background:#25252b}
+.nv-node-badge{width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#111;flex-shrink:0}
+.nv-device-cell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:16px}
+.nv-route-cell{display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap}
+.nv-route-cell .lwr{color:#666;font-size:11px;white-space:nowrap}
+.nv-route-cell .dash{color:#555;font-size:10px}
+.nv-route-badge{width:20px;height:20px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#111;flex-shrink:0}
+.nv-stat-cell{font-size:13px;color:#ccc}
+.nv-flags-cell{font-size:12px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:16px}
+.nv-kebab{color:#666;cursor:pointer;padding:4px;border-radius:4px;border:none;background:none;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.nv-kebab:hover{color:#fff;background:rgba(255,255,255,.1)}
+.nv-kebab svg{width:18px;height:18px}
 `;
 
 /* ── Constants ────────────────────────────────────────── */
@@ -424,11 +419,14 @@ class OrganicGraphRenderer {
   destroy() { this.sim?.stop(); this.container.innerHTML = ''; }
 }
 
-/* ── GridMatrixRenderer (Homey-style Routing Table) ───── */
+/* ── GridMatrixRenderer (Homey Developer Tools style) ─── */
+const BADGE_PALETTE = ['#f87171','#fb923c','#fbbf24','#a3e635','#34d399','#22d3ee','#60a5fa','#a78bfa','#f472b6','#e879f9'];
+function badgeColor(idx) { return BADGE_PALETTE[idx % BADGE_PALETTE.length]; }
+
 class GridMatrixRenderer {
   constructor(container, opts = {}) {
     this.container = container; this.opts = opts;
-    this._nodes = []; this._links = []; this._rows = null;
+    this._nodes = []; this._links = []; this._rowEls = [];
   }
   init(nodes, links) {
     this._nodes = nodes; this._links = links;
@@ -436,23 +434,17 @@ class GridMatrixRenderer {
     const isZigbee = nodes.some(n => n.protocol === 'zigbee');
     const nodeMap = {}; nodes.forEach(n => nodeMap[n.id] = n);
     // Build neighbor map
-    const nbrs = {};
-    nodes.forEach(n => nbrs[n.id] = new Set());
-    links.forEach(l => {
-      if (nbrs[l.source]) nbrs[l.source].add(l.target);
-      if (nbrs[l.target]) nbrs[l.target].add(l.source);
-    });
-    // Build parent map for route tracing (target's parent = source)
+    const nbrs = {}; nodes.forEach(n => nbrs[n.id] = new Set());
+    links.forEach(l => { if(nbrs[l.source]) nbrs[l.source].add(l.target); if(nbrs[l.target]) nbrs[l.target].add(l.source); });
+    // Parent map for route tracing
     const parentMap = {};
-    links.forEach(l => { parentMap[l.target] = { id: l.source, lqi: l.lqi }; });
+    links.forEach(l => { parentMap[l.target] = l.source; });
     const traceRoute = (nid) => {
       const route = []; let cur = nid; const vis = new Set();
-      while (parentMap[cur] && !vis.has(cur)) {
-        vis.add(cur); route.push(parentMap[cur].id); cur = parentMap[cur].id;
-      }
-      return route;
+      while (parentMap[cur] && !vis.has(cur)) { vis.add(cur); route.push(parentMap[cur]); cur = parentMap[cur]; }
+      return route; // array of hop IDs from device toward coordinator
     };
-    // Sort: coordinator/controller first, then by nodeId or name
+    // Sort
     const sorted = [...nodes].sort((a, b) => {
       const ac = (a.type === 'coordinator' || a.type === 'controller') ? 0 : 1;
       const bc = (b.type === 'coordinator' || b.type === 'controller') ? 0 : 1;
@@ -460,111 +452,129 @@ class GridMatrixRenderer {
       if (a.nodeId != null && b.nodeId != null) return a.nodeId - b.nodeId;
       return a.name.localeCompare(b.name);
     });
-    // Build table
+    // Node index for badge colors
+    const idxMap = {}; sorted.forEach((n, i) => idxMap[n.id] = i);
+    // Grid columns
+    const gridCols = isZigbee
+      ? '50px 250px 1fr 70px 1fr 1fr 30px'
+      : '50px 250px 1fr 80px 80px 90px 60px 1fr 30px';
     const wrap = document.createElement('div');
     wrap.className = 'nv-grid-wrap';
-    const table = document.createElement('table');
-    table.className = 'nv-rtable';
     // Header
-    const thead = document.createElement('thead');
-    const hRow = document.createElement('tr');
-    const cols = ['#', 'Device', 'Route'];
-    if (isZigbee) cols.push('LQI');
-    cols.push('Neighbors', 'Area');
-    cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hRow.appendChild(th); });
-    thead.appendChild(hRow); table.appendChild(thead);
-    // Body
-    const tbody = document.createElement('tbody');
+    const header = document.createElement('div');
+    header.className = 'nv-grid-header';
+    header.style.gridTemplateColumns = gridCols;
+    const hLabels = isZigbee
+      ? ['NodeID', 'Device', 'Route', 'LQI', 'Neighbors', 'Area', '']
+      : ['NodeID', 'Device', 'Route', 'Tx Queued', 'Tx Sent', 'Tx Error', 'Rx', 'Flags', ''];
+    hLabels.forEach(l => { const d = document.createElement('div'); d.textContent = l; header.appendChild(d); });
+    wrap.appendChild(header);
+    // Rows
+    const rowEls = [];
     sorted.forEach((node, idx) => {
-      const tr = document.createElement('tr');
-      tr.dataset.nodeId = node.id;
-      if (node.type === 'coordinator' || node.type === 'controller') tr.className = 'coord-row';
-      // # column
-      const tdId = document.createElement('td'); tdId.className = 'rt-id';
-      tdId.textContent = node.nodeId != null ? node.nodeId : (idx + 1);
-      tr.appendChild(tdId);
-      // Device column
-      const tdDev = document.createElement('td');
-      const devDiv = document.createElement('div'); devDiv.className = 'rt-device';
-      const iconSpan = document.createElement('span'); iconSpan.className = 'rt-icon';
-      const nc = NODE_COLORS[node.type] || NODE_COLORS.node;
-      iconSpan.style.background = nc.fill + '33'; iconSpan.style.border = '2px solid ' + nc.fill;
-      iconSpan.textContent = nc.icon;
-      devDiv.appendChild(iconSpan);
-      const infoDiv = document.createElement('div');
-      const nameDiv = document.createElement('div'); nameDiv.className = 'rt-name';
-      nameDiv.textContent = node.name; infoDiv.appendChild(nameDiv);
-      if (node.manufacturer || node.model) {
-        const modelDiv = document.createElement('div'); modelDiv.className = 'rt-model';
-        modelDiv.textContent = [node.manufacturer, node.model].filter(Boolean).join(' — ');
-        infoDiv.appendChild(modelDiv);
-      }
-      devDiv.appendChild(infoDiv); tdDev.appendChild(devDiv); tr.appendChild(tdDev);
-      // Route column
-      const tdRoute = document.createElement('td');
-      const routeDiv = document.createElement('div'); routeDiv.className = 'rt-route';
-      if (node.type === 'coordinator' || node.type === 'controller') {
-        const b = document.createElement('span'); b.className = 'rt-hop direct'; b.textContent = '● Base';
-        routeDiv.appendChild(b);
+      const isBase = node.type === 'coordinator' || node.type === 'controller';
+      const row = document.createElement('div');
+      row.className = 'nv-grid-row';
+      row.dataset.nodeId = node.id;
+      row.style.gridTemplateColumns = gridCols;
+      // NodeID badge
+      const nid = document.createElement('div');
+      const badge = document.createElement('div');
+      badge.className = 'nv-node-badge';
+      badge.style.background = badgeColor(idx);
+      badge.textContent = node.nodeId != null ? node.nodeId : (idx + 1);
+      nid.appendChild(badge);
+      row.appendChild(nid);
+      // Device
+      const dev = document.createElement('div');
+      dev.className = 'nv-device-cell';
+      dev.textContent = node.name;
+      dev.title = node.name + (node.manufacturer || node.model ? ' — ' + [node.manufacturer, node.model].filter(Boolean).join(' ') : '');
+      row.appendChild(dev);
+      // Route
+      const rtCell = document.createElement('div');
+      rtCell.className = 'nv-route-cell';
+      if (isBase) {
+        // Coordinator: empty route
       } else {
         const route = traceRoute(node.id);
-        if (route.length === 0) {
-          const b = document.createElement('span'); b.className = 'rt-hop';
-          b.textContent = '? Unknown'; b.style.borderColor = '#f44336'; b.style.color = '#f44336';
-          routeDiv.appendChild(b);
-        } else if (route.length === 1 && (nodeMap[route[0]]?.type === 'coordinator' || nodeMap[route[0]]?.type === 'controller')) {
-          const b = document.createElement('span'); b.className = 'rt-hop direct'; b.textContent = '→ Direct';
-          routeDiv.appendChild(b);
-        } else {
-          route.forEach((hopId, i) => {
-            if (i > 0) { const ar = document.createElement('span'); ar.className = 'rt-arrow'; ar.textContent = '→'; routeDiv.appendChild(ar); }
-            const hop = nodeMap[hopId]; const hnc = NODE_COLORS[hop?.type] || NODE_COLORS.node;
-            const b = document.createElement('span'); b.className = 'rt-hop';
-            b.style.borderColor = hnc.fill; b.style.color = hnc.fill;
-            const hn = hop ? (hop.name.length > 14 ? hop.name.slice(0,12)+'…' : hop.name) : hopId;
-            b.textContent = hnc.icon + ' ' + hn;
-            routeDiv.appendChild(b);
+        if (route.length > 0) {
+          const lwr = document.createElement('span');
+          lwr.className = 'lwr';
+          lwr.textContent = 'Last working route';
+          rtCell.appendChild(lwr);
+          // Build full chain: route hops + self
+          const chain = [...route.reverse(), node.id];
+          chain.forEach((hopId, i) => {
+            if (i > 0) { const d = document.createElement('span'); d.className = 'dash'; d.textContent = '-'; rtCell.appendChild(d); }
+            const hopNode = nodeMap[hopId];
+            const hopIdx = idxMap[hopId] ?? 0;
+            const rb = document.createElement('div');
+            rb.className = 'nv-route-badge';
+            rb.style.background = badgeColor(hopIdx);
+            rb.textContent = hopNode?.nodeId != null ? hopNode.nodeId : (hopIdx + 1);
+            rb.title = hopNode?.name || hopId;
+            rtCell.appendChild(rb);
           });
         }
       }
-      tdRoute.appendChild(routeDiv); tr.appendChild(tdRoute);
-      // LQI column (Zigbee only)
+      row.appendChild(rtCell);
       if (isZigbee) {
-        const tdLqi = document.createElement('td');
-        if (node.lqi != null) {
-          const lb = document.createElement('span'); lb.className = 'rt-lqi';
-          lb.textContent = node.lqi; lb.style.background = lqiColor(node.lqi) + '33';
-          lb.style.color = lqiColor(node.lqi); lb.style.border = '1px solid ' + lqiColor(node.lqi);
-          tdLqi.appendChild(lb);
-        } else { tdLqi.style.color = 'var(--nv-text-dim)'; tdLqi.textContent = node.type === 'coordinator' ? '—' : 'N/A'; }
-        tr.appendChild(tdLqi);
-      }
-      // Neighbors column
-      const tdNbr = document.createElement('td');
-      const nbrSet = nbrs[node.id] || new Set();
-      if (nbrSet.size > 0) {
-        const cs = document.createElement('span'); cs.className = 'rt-neighbors';
-        cs.textContent = nbrSet.size + ' '; tdNbr.appendChild(cs);
-        [...nbrSet].slice(0, 6).forEach(nid => {
-          const nb = nodeMap[nid]; const badge = document.createElement('span'); badge.className = 'rt-nbr-badge';
-          badge.textContent = nb ? (nb.nodeId != null ? '#' + nb.nodeId : nb.name.slice(0,8)) : String(nid).slice(0,6);
-          badge.title = nb?.name || nid; tdNbr.appendChild(badge);
+        // LQI
+        const lqiCell = document.createElement('div');
+        lqiCell.className = 'nv-stat-cell';
+        if (isBase) { lqiCell.textContent = '—'; }
+        else if (node.lqi != null) { lqiCell.textContent = node.lqi; lqiCell.style.color = lqiColor(node.lqi); }
+        else { lqiCell.textContent = '—'; lqiCell.style.color = '#555'; }
+        row.appendChild(lqiCell);
+        // Neighbors
+        const nbrCell = document.createElement('div');
+        nbrCell.className = 'nv-flags-cell';
+        const nbrSet = nbrs[node.id] || new Set();
+        nbrCell.textContent = nbrSet.size > 0 ? [...nbrSet].map(nid => { const nb = nodeMap[nid]; return nb?.nodeId != null ? '#'+nb.nodeId : (nb?.name?.slice(0,10) || '?'); }).join(', ') : '—';
+        nbrCell.title = [...(nbrs[node.id]||[])].map(nid => nodeMap[nid]?.name || nid).join(', ');
+        row.appendChild(nbrCell);
+        // Area
+        const areaCell = document.createElement('div');
+        areaCell.className = 'nv-flags-cell';
+        areaCell.textContent = node.area || '—';
+        row.appendChild(areaCell);
+      } else {
+        // Z-Wave: Tx Queued, Tx Sent, Tx Error, Rx, Flags
+        ['—','—','—','—'].forEach(() => {
+          const c = document.createElement('div');
+          c.className = 'nv-stat-cell';
+          c.textContent = isBase ? '—' : '—';
+          row.appendChild(c);
         });
-        if (nbrSet.size > 6) { const m = document.createElement('span'); m.className = 'rt-nbr-badge'; m.textContent = '+' + (nbrSet.size-6); tdNbr.appendChild(m); }
-      } else { tdNbr.style.color = 'var(--nv-text-dim)'; tdNbr.textContent = '—'; }
-      tr.appendChild(tdNbr);
-      // Area column
-      const tdArea = document.createElement('td'); tdArea.className = 'rt-area';
-      tdArea.textContent = node.area || '—'; tr.appendChild(tdArea);
-      tbody.appendChild(tr);
+        // Flags
+        const flagCell = document.createElement('div');
+        flagCell.className = 'nv-flags-cell';
+        flagCell.textContent = node.area || '—';
+        row.appendChild(flagCell);
+      }
+      // Kebab menu
+      const kebabCell = document.createElement('div');
+      kebabCell.style.display = 'flex'; kebabCell.style.justifyContent = 'flex-end';
+      if (!isBase) {
+        const btn = document.createElement('button');
+        btn.className = 'nv-kebab';
+        btn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"/></svg>';
+        btn.title = 'Actions';
+        if (this.opts.onNodeClick) btn.addEventListener('click', () => this.opts.onNodeClick(node));
+        kebabCell.appendChild(btn);
+      }
+      row.appendChild(kebabCell);
+      wrap.appendChild(row);
+      rowEls.push(row);
     });
-    table.appendChild(tbody); wrap.appendChild(table); this.container.appendChild(wrap);
-    this._wrap = wrap; this._rows = tbody.querySelectorAll('tr');
+    this.container.appendChild(wrap);
+    this._rowEls = rowEls;
   }
   highlightNode(nodeId) {
-    this._rows?.forEach(tr => { tr.style.opacity = tr.dataset.nodeId === nodeId ? '1' : '0.3'; });
+    this._rowEls.forEach(r => { r.style.opacity = r.dataset.nodeId === nodeId ? '1' : '0.3'; });
   }
-  clearHighlight() { this._rows?.forEach(tr => { tr.style.opacity = '1'; }); }
+  clearHighlight() { this._rowEls.forEach(r => { r.style.opacity = '1'; }); }
   resetZoom() {}
   zoomIn() {}
   zoomOut() {}
