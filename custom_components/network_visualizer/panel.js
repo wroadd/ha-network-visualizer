@@ -79,6 +79,28 @@ const NV_CSS = `
 .nv-scan.scanning{color:var(--nv-primary);border-color:var(--nv-primary);animation:pulse 1.5s infinite;cursor:wait}
 .nv-scan .scan-icon{font-size:14px}
 .nv-scan-status{font-size:11px;color:var(--nv-text-dim);padding:0 4px}
+.nv-log-btn{background:transparent;color:var(--nv-text-dim);border:1px solid var(--nv-border);border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:4px;white-space:nowrap}
+.nv-log-btn:hover{background:rgba(79,195,247,.15);color:var(--nv-primary);border-color:var(--nv-primary)}
+.nv-log-btn.has-errors{color:#f44336;border-color:#f44336}
+.nv-log-btn .log-badge{background:var(--nv-primary);color:#000;border-radius:8px;padding:0 5px;font-size:10px;font-weight:700;min-width:16px;text-align:center}
+.nv-log-panel{position:absolute;top:0;right:0;width:420px;max-width:100%;height:100%;background:var(--nv-surface);border-left:1px solid var(--nv-border);z-index:30;display:none;flex-direction:column;box-shadow:-4px 0 20px rgba(0,0,0,.5)}
+.nv-log-panel.open{display:flex}
+.nv-log-panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--nv-border);flex-shrink:0}
+.nv-log-panel-header h3{font-size:14px;font-weight:600;color:var(--nv-primary);margin:0}
+.nv-log-panel-header button{background:none;border:none;color:var(--nv-text-dim);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px}
+.nv-log-panel-header button:hover{color:var(--nv-text);background:rgba(255,255,255,.1)}
+.nv-log-panel-body{flex:1;overflow-y:auto;padding:8px 0;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+.nv-log-entry{padding:4px 14px;border-bottom:1px solid rgba(255,255,255,.03);line-height:1.5;word-break:break-word}
+.nv-log-entry:hover{background:rgba(255,255,255,.03)}
+.nv-log-entry .log-time{color:#666;margin-right:8px;font-size:10px}
+.nv-log-entry.log-info{color:#90caf9}
+.nv-log-entry.log-warn{color:#ffb74d}
+.nv-log-entry.log-error{color:#ef5350}
+.nv-log-entry.log-success{color:#66bb6a}
+.nv-log-entry.log-debug{color:#888}
+.nv-log-panel-footer{display:flex;gap:8px;padding:8px 14px;border-top:1px solid var(--nv-border);flex-shrink:0}
+.nv-log-panel-footer button{background:transparent;color:var(--nv-text-dim);border:1px solid var(--nv-border);border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer}
+.nv-log-panel-footer button:hover{color:var(--nv-text);background:rgba(255,255,255,.08)}
 `;
 
 /* ── Constants ────────────────────────────────────────── */
@@ -603,6 +625,8 @@ class NetworkVisualizerPanel extends HTMLElement {
     this._settings = loadStore(STOR.SETTINGS);
     if (this._settings.activeTab) this._activeTab = this._settings.activeTab;
     if (this._settings.graphType) this._activeGraphType = this._settings.graphType;
+    this._logs = [];
+    this._logOpen = false;
   }
 
   set hass(hass) {
@@ -628,6 +652,7 @@ class NetworkVisualizerPanel extends HTMLElement {
         </div>
         <button class="nv-scan" title="Scan Zigbee network topology (may take 10s-2min)"><span class="scan-icon">📡</span> Scan</button>
         <span class="nv-scan-status"></span>
+        <button class="nv-log-btn" title="Show log"><span>📋</span> Log <span class="log-badge">0</span></button>
         <div class="nv-search"><input type="text" placeholder="🔍 Search..." /></div>
       </div>
       <div class="nv-tabs">
@@ -644,6 +669,11 @@ class NetworkVisualizerPanel extends HTMLElement {
           <button data-z="reset" title="Reset">⟲</button>
         </div>
         <div class="nv-loading"><div class="spinner"></div>Loading…</div>
+        <div class="nv-log-panel">
+          <div class="nv-log-panel-header"><h3>📋 Log</h3><button class="nv-log-close" title="Close">✕</button></div>
+          <div class="nv-log-panel-body"></div>
+          <div class="nv-log-panel-footer"><button class="nv-log-clear">Clear</button><button class="nv-log-copy">Copy All</button></div>
+        </div>
       </div>
       <div class="nv-stats"></div>
     </div>`;
@@ -653,6 +683,14 @@ class NetworkVisualizerPanel extends HTMLElement {
     s.querySelectorAll('.nv-graph-types button').forEach(b => b.addEventListener('click', () => this._switchGraphType(b.dataset.type)));
     // Events — scan
     s.querySelector('.nv-scan').addEventListener('click', () => this._scanZigbeeTopology());
+    // Events — log
+    s.querySelector('.nv-log-btn').addEventListener('click', () => this._toggleLog());
+    s.querySelector('.nv-log-close').addEventListener('click', () => this._toggleLog(false));
+    s.querySelector('.nv-log-clear').addEventListener('click', () => { this._logs = []; this._renderLog(); });
+    s.querySelector('.nv-log-copy').addEventListener('click', () => {
+      const text = this._logs.map(l => `[${l.time}] [${l.level}] ${l.msg}`).join('\n');
+      navigator.clipboard?.writeText(text).then(() => this._log('info', 'Log copied to clipboard'));
+    });
     // Events — search
     s.querySelector('.nv-search input').addEventListener('input', e => this._handleSearch(e.target.value));
     // Events — zoom
@@ -682,6 +720,7 @@ class NetworkVisualizerPanel extends HTMLElement {
   }
 
   async _loadData() {
+    this._log('info', 'Loading device data from Home Assistant…');
     try {
       const [devices, entities, states] = await Promise.all([
         this._hass.callWS({ type: 'config/device_registry/list' }),
@@ -695,6 +734,7 @@ class NetworkVisualizerPanel extends HTMLElement {
       const nodes = [], links = [];
 
       // ── Zigbee (Zigbee2MQTT) ──
+      this._log('info', `Loaded ${devices.length} devices, ${entities.length} entities, ${(areas||[]).length} areas`);
       const z2mDevices = devices.filter(d => d.identifiers?.some(id => Array.isArray(id) && id[0] === 'mqtt' && (id[1]||'').startsWith('zigbee2mqtt_')));
       let coordId = null;
       z2mDevices.forEach(d => {
@@ -742,7 +782,7 @@ class NetworkVisualizerPanel extends HTMLElement {
             if (nbrs) n._realNeighbors = nbrs;
           });
         }
-        console.log('[NetworkVisualizer] Using cached Zigbee topology (%d links)', links.filter(l => l.protocol === 'zigbee').length);
+        this._log('success', `Using cached Zigbee topology (${links.filter(l => l.protocol === 'zigbee').length} links)`);
       } else if (coordId) {
         // Heuristic fallback
         const routers = nodes.filter(n => n.protocol === 'zigbee' && n.type === 'router');
@@ -753,7 +793,7 @@ class NetworkVisualizerPanel extends HTMLElement {
           const parent = sameAreaRouter || routers[0] || coordId;
           links.push({ source: typeof parent === 'string' ? parent : parent.id, target: e.id, lqi: e.lqi, protocol: 'zigbee' });
         });
-        console.log('[NetworkVisualizer] Using heuristic Zigbee topology (no scan data)');
+        this._log('warn', 'Using heuristic Zigbee topology (no scan data). Use Scan for real topology.');
       }
 
       // ── Z-Wave (Z-Wave JS) ──
@@ -779,12 +819,13 @@ class NetworkVisualizerPanel extends HTMLElement {
         });
       }
 
+      this._log('info', `Built graph: ${nodes.length} nodes, ${links.length} links (Zigbee: ${nodes.filter(n=>n.protocol==='zigbee').length}, Z-Wave: ${nodes.filter(n=>n.protocol==='zwave').length})`);
       this._allNodes = nodes;
       this._allLinks = links;
       this._hideLoading();
       this._buildGraph();
     } catch (err) {
-      console.error('[NetworkVisualizer] Load error:', err);
+      this._log('error', `Load error: ${err.message}`);
       this._hideLoading();
       const graph = this.shadowRoot.querySelector('.nv-graph');
       if (graph) graph.innerHTML = `<div style="padding:40px;text-align:center;color:#f44336">Error loading data: ${err.message}</div>`;
@@ -896,11 +937,14 @@ class NetworkVisualizerPanel extends HTMLElement {
     scanBtn.classList.add('scanning');
     scanBtn.querySelector('.scan-icon').textContent = '⏳';
     if (statusEl) statusEl.textContent = 'Scanning…';
+    this._log('info', 'Starting Zigbee topology scan…');
     try {
       // Get Z2M base topic from config (default: zigbee2mqtt)
       const z2mTopic = this._hass?.config?.components?.includes?.('mqtt') ? 'zigbee2mqtt' : 'zigbee2mqtt';
       const responseTopic = `${z2mTopic}/bridge/response/networkmap`;
       const requestTopic = `${z2mTopic}/bridge/request/networkmap`;
+      this._log('info', `MQTT subscribe: ${responseTopic}`);
+      this._log('info', `MQTT publish: ${requestTopic} → {type:"raw",routes:true}`);
       // Subscribe to response
       const result = await new Promise((resolve, reject) => {
         let unsub = null;
@@ -922,7 +966,9 @@ class NetworkVisualizerPanel extends HTMLElement {
         }, 500);
       });
       // Parse the response
+      this._log('info', 'Received MQTT response, parsing…');
       const payload = typeof result.payload === 'string' ? JSON.parse(result.payload) : result.payload;
+      this._log('debug', `Response status: ${payload.status}, has data.value: ${!!payload.data?.value}`);
       if (payload.status !== 'ok' || !payload.data?.value) throw new Error(payload.error || 'Invalid response');
       const raw = payload.data.value;
       // Build links and neighbors from raw data
@@ -953,17 +999,62 @@ class NetworkVisualizerPanel extends HTMLElement {
       topo.zigbeeScanTime = Date.now();
       saveStore(STOR.TOPOLOGY, topo);
       if (statusEl) statusEl.textContent = `✅ ${zigbeeLinks.length} links found`;
-      console.log('[NetworkVisualizer] Scan complete: %d links, %d nodes with neighbors', zigbeeLinks.length, Object.keys(zigbeeNeighbors).length);
+      this._log('success', `Scan complete: ${zigbeeLinks.length} links, ${Object.keys(zigbeeNeighbors).length} nodes with neighbors`);
       // Reload data to use new topology
       await this._loadData();
     } catch (err) {
-      console.error('[NetworkVisualizer] Scan error:', err);
+      this._log('error', `Scan error: ${err.message}`);
       if (statusEl) statusEl.textContent = `❌ ${err.message}`;
     } finally {
       scanBtn.classList.remove('scanning');
       scanBtn.querySelector('.scan-icon').textContent = '📡';
       setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 8000);
     }
+  }
+
+  _log(level, msg) {
+    const now = new Date();
+    const time = now.toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    this._logs.push({ level, msg, time, ts: now.getTime() });
+    if (this._logs.length > 500) this._logs.shift();
+    // Update badge
+    const badge = this.shadowRoot?.querySelector('.log-badge');
+    if (badge) badge.textContent = this._logs.length;
+    // Update if log panel is open
+    if (this._logOpen) this._renderLog();
+    // Also mirror to console
+    const fn = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
+    console[fn](`[NetworkVisualizer] ${msg}`);
+    // Mark button if error
+    const btn = this.shadowRoot?.querySelector('.nv-log-btn');
+    if (btn && level === 'error') btn.classList.add('has-errors');
+  }
+
+  _toggleLog(forceState) {
+    this._logOpen = forceState !== undefined ? forceState : !this._logOpen;
+    const panel = this.shadowRoot?.querySelector('.nv-log-panel');
+    if (panel) panel.classList.toggle('open', this._logOpen);
+    if (this._logOpen) this._renderLog();
+    // Clear error indicator when opening
+    if (this._logOpen) {
+      const btn = this.shadowRoot?.querySelector('.nv-log-btn');
+      if (btn) btn.classList.remove('has-errors');
+    }
+  }
+
+  _renderLog() {
+    const body = this.shadowRoot?.querySelector('.nv-log-panel-body');
+    if (!body) return;
+    body.innerHTML = this._logs.map(l =>
+      `<div class="nv-log-entry log-${l.level}"><span class="log-time">${l.time}</span>${this._escHtml(l.msg)}</div>`
+    ).join('');
+    body.scrollTop = body.scrollHeight;
+    const badge = this.shadowRoot?.querySelector('.log-badge');
+    if (badge) badge.textContent = this._logs.length;
+  }
+
+  _escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   _handleSearch(query) {
