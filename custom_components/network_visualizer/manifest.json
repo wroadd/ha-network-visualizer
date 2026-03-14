@@ -1,7 +1,7 @@
 {
   "domain": "network_visualizer",
   "name": "Zigbee & Z-Wave Network Visualizer",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "documentation": "https://github.com/wroadd/ha-network-visualizer",
   "issue_tracker": "https://github.com/wroadd/ha-network-visualizer/issues",
   "codeowners": ["@wroadd"],
