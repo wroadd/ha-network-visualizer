@@ -74,12 +74,18 @@ const NV_CSS = `
 .nv-kebab{color:#666;cursor:pointer;padding:4px;border-radius:4px;border:none;background:none;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .nv-kebab:hover{color:#fff;background:rgba(255,255,255,.1)}
 .nv-kebab svg{width:18px;height:18px}
+.nv-scan{background:transparent;color:var(--nv-text-dim);border:1px solid var(--nv-border);border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:4px;white-space:nowrap}
+.nv-scan:hover{background:rgba(0,230,118,.15);color:var(--nv-accent);border-color:var(--nv-accent)}
+.nv-scan.scanning{color:var(--nv-primary);border-color:var(--nv-primary);animation:pulse 1.5s infinite;cursor:wait}
+.nv-scan .scan-icon{font-size:14px}
+.nv-scan-status{font-size:11px;color:var(--nv-text-dim);padding:0 4px}
 `;
 
 /* ── Constants ────────────────────────────────────────── */
 const STOR = {
   POSITIONS: 'nv3_positions',
   SETTINGS: 'nv3_settings',
+  TOPOLOGY: 'nv3_topology',
 };
 
 const NODE_COLORS = {
@@ -620,6 +626,8 @@ class NetworkVisualizerPanel extends HTMLElement {
           <button data-type="organic" class="${this._activeGraphType==='organic'?'active':''}">Organic</button>
           <button data-type="grid" class="${this._activeGraphType==='grid'?'active':''}">Grid</button>
         </div>
+        <button class="nv-scan" title="Scan Zigbee network topology (may take 10s-2min)"><span class="scan-icon">📡</span> Scan</button>
+        <span class="nv-scan-status"></span>
         <div class="nv-search"><input type="text" placeholder="🔍 Search..." /></div>
       </div>
       <div class="nv-tabs">
@@ -643,6 +651,8 @@ class NetworkVisualizerPanel extends HTMLElement {
     s.querySelectorAll('.nv-tab').forEach(t => t.addEventListener('click', () => this._switchTab(t.dataset.tab)));
     // Events — graph type
     s.querySelectorAll('.nv-graph-types button').forEach(b => b.addEventListener('click', () => this._switchGraphType(b.dataset.type)));
+    // Events — scan
+    s.querySelector('.nv-scan').addEventListener('click', () => this._scanZigbeeTopology());
     // Events — search
     s.querySelector('.nv-search input').addEventListener('input', e => this._handleSearch(e.target.value));
     // Events — zoom
@@ -711,8 +721,30 @@ class NetworkVisualizerPanel extends HTMLElement {
           lqi: isNaN(lqi) ? null : lqi, area: areaMap[d.area_id] || null, ieee,
         });
       });
-      // Build Zigbee links
-      if (coordId) {
+      // Build Zigbee links — use cached topology if available, else heuristic fallback
+      const cachedTopo = loadStore(STOR.TOPOLOGY);
+      const zigbeeNodes = nodes.filter(n => n.protocol === 'zigbee');
+      if (cachedTopo.zigbeeLinks && cachedTopo.zigbeeLinks.length > 0) {
+        // Use real topology from scan
+        const ieeeToId = {};
+        zigbeeNodes.forEach(n => { if (n.ieee) ieeeToId[n.ieee.toLowerCase()] = n.id; });
+        cachedTopo.zigbeeLinks.forEach(l => {
+          const srcId = ieeeToId[l.source?.toLowerCase()] || l.source;
+          const tgtId = ieeeToId[l.target?.toLowerCase()] || l.target;
+          if (srcId && tgtId && nodes.find(n => n.id === srcId) && nodes.find(n => n.id === tgtId)) {
+            links.push({ source: srcId, target: tgtId, lqi: l.lqi ?? null, protocol: 'zigbee' });
+          }
+        });
+        // Update neighbor data on nodes
+        if (cachedTopo.zigbeeNeighbors) {
+          zigbeeNodes.forEach(n => {
+            const nbrs = cachedTopo.zigbeeNeighbors[n.ieee?.toLowerCase()];
+            if (nbrs) n._realNeighbors = nbrs;
+          });
+        }
+        console.log('[NetworkVisualizer] Using cached Zigbee topology (%d links)', links.filter(l => l.protocol === 'zigbee').length);
+      } else if (coordId) {
+        // Heuristic fallback
         const routers = nodes.filter(n => n.protocol === 'zigbee' && n.type === 'router');
         const endDevs = nodes.filter(n => n.protocol === 'zigbee' && n.type === 'end_device');
         routers.forEach(r => links.push({ source: coordId, target: r.id, lqi: r.lqi, protocol: 'zigbee' }));
@@ -721,6 +753,7 @@ class NetworkVisualizerPanel extends HTMLElement {
           const parent = sameAreaRouter || routers[0] || coordId;
           links.push({ source: typeof parent === 'string' ? parent : parent.id, target: e.id, lqi: e.lqi, protocol: 'zigbee' });
         });
+        console.log('[NetworkVisualizer] Using heuristic Zigbee topology (no scan data)');
       }
 
       // ── Z-Wave (Z-Wave JS) ──
@@ -850,6 +883,87 @@ class NetworkVisualizerPanel extends HTMLElement {
     tip.style.left = Math.min(event.clientX - rect.left + 12, rect.width - 270) + 'px';
     tip.style.top = Math.min(event.clientY - rect.top + 12, rect.height - 150) + 'px';
     tip.classList.add('show');
+  }
+
+  async _scanZigbeeTopology() {
+    const scanBtn = this.shadowRoot.querySelector('.nv-scan');
+    const statusEl = this.shadowRoot.querySelector('.nv-scan-status');
+    if (!scanBtn || scanBtn.classList.contains('scanning')) return;
+    if (this._activeTab !== 'zigbee') {
+      if (statusEl) { statusEl.textContent = 'Switch to Zigbee tab first'; setTimeout(() => statusEl.textContent = '', 3000); }
+      return;
+    }
+    scanBtn.classList.add('scanning');
+    scanBtn.querySelector('.scan-icon').textContent = '⏳';
+    if (statusEl) statusEl.textContent = 'Scanning…';
+    try {
+      // Get Z2M base topic from config (default: zigbee2mqtt)
+      const z2mTopic = this._hass?.config?.components?.includes?.('mqtt') ? 'zigbee2mqtt' : 'zigbee2mqtt';
+      const responseTopic = `${z2mTopic}/bridge/response/networkmap`;
+      const requestTopic = `${z2mTopic}/bridge/request/networkmap`;
+      // Subscribe to response
+      const result = await new Promise((resolve, reject) => {
+        let unsub = null;
+        const timeout = setTimeout(() => { unsub?.(); reject(new Error('Scan timeout (2 min)')); }, 120000);
+        this._hass.connection.subscribeMessage(
+          (msg) => {
+            clearTimeout(timeout);
+            unsub?.();
+            resolve(msg);
+          },
+          { type: 'mqtt/subscribe', topic: responseTopic }
+        ).then(u => { unsub = u; });
+        // Publish scan request
+        setTimeout(() => {
+          this._hass.callService('mqtt', 'publish', {
+            topic: requestTopic,
+            payload: JSON.stringify({ type: 'raw', routes: true }),
+          }).catch(reject);
+        }, 500);
+      });
+      // Parse the response
+      const payload = typeof result.payload === 'string' ? JSON.parse(result.payload) : result.payload;
+      if (payload.status !== 'ok' || !payload.data?.value) throw new Error(payload.error || 'Invalid response');
+      const raw = payload.data.value;
+      // Build links and neighbors from raw data
+      const zigbeeLinks = [];
+      const zigbeeNeighbors = {};
+      if (raw.links && Array.isArray(raw.links)) {
+        raw.links.forEach(l => {
+          const src = l.source?.ieee_address;
+          const tgt = l.target?.ieee_address;
+          if (src && tgt) {
+            zigbeeLinks.push({ source: src, target: tgt, lqi: l.lqi ?? null, depth: l.depth ?? null, relationship: l.relationship ?? null });
+          }
+        });
+      }
+      if (raw.nodes && Array.isArray(raw.nodes)) {
+        raw.nodes.forEach(n => {
+          if (n.ieee_address && n.neighbors) {
+            zigbeeNeighbors[n.ieee_address.toLowerCase()] = n.neighbors.map(nb => ({
+              ieee: nb.ieee_address, lqi: nb.lqi, relationship: nb.relationship, depth: nb.depth,
+            }));
+          }
+        });
+      }
+      // Cache
+      const topo = loadStore(STOR.TOPOLOGY);
+      topo.zigbeeLinks = zigbeeLinks;
+      topo.zigbeeNeighbors = zigbeeNeighbors;
+      topo.zigbeeScanTime = Date.now();
+      saveStore(STOR.TOPOLOGY, topo);
+      if (statusEl) statusEl.textContent = `✅ ${zigbeeLinks.length} links found`;
+      console.log('[NetworkVisualizer] Scan complete: %d links, %d nodes with neighbors', zigbeeLinks.length, Object.keys(zigbeeNeighbors).length);
+      // Reload data to use new topology
+      await this._loadData();
+    } catch (err) {
+      console.error('[NetworkVisualizer] Scan error:', err);
+      if (statusEl) statusEl.textContent = `❌ ${err.message}`;
+    } finally {
+      scanBtn.classList.remove('scanning');
+      scanBtn.querySelector('.scan-icon').textContent = '📡';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 8000);
+    }
   }
 
   _handleSearch(query) {
