@@ -98,7 +98,7 @@ Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQ
 # In your HA config directory:
 mkdir -p custom_components/network_visualizer
 # Copy the contents of custom_components/network_visualizer/ here
-# The panel JS + D3.js are automatically copied to www/ when the integration starts.
+# The panel JS is automatically copied to www/ when the integration starts.
 ```
 
 ### Configuration
@@ -114,18 +114,6 @@ mkdir -p custom_components/network_visualizer
 | Z-Wave JS UI WebSocket URL | ZUI WebSocket URL (auto-detected) | — |
 
 3. The panel will appear in the sidebar.
-
-### Lovelace Card Usage
-
-Add a card to any dashboard:
-
-```yaml
-type: custom:network-visualizer-card
-height: 500
-z2m_mqtt_topic: zigbee2mqtt
-```
-
-The card auto-registers itself in the Lovelace card picker.
 
 ## Requirements
 

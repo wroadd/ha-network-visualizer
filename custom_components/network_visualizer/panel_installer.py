@@ -13,7 +13,6 @@ from homeassistant.core import HomeAssistant
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_JS = "panel.js"
-D3_JS = "d3.min.js"
 WWW_SUBDIR = "network-visualizer"
 
 
@@ -26,7 +25,7 @@ def install_panel_files(hass: HomeAssistant) -> bool:
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
         ok = True
-        for filename in (PANEL_JS, D3_JS):
+        for filename in (PANEL_JS,):
             src = source_dir / filename
             dst = dest_dir / filename
             if src.exists():
