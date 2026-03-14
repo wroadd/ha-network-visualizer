@@ -45,15 +45,18 @@ Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQ
 - Pulsing animation on coordinator/controller
 - Softer force parameters for organic feel
 
-#### Grid Matrix (Routing Table inspired)
-- Adjacency matrix table — rows and columns are devices
-- LQI values displayed in cells with color-coded backgrounds (green = good, red = poor)
-- Coordinator/controller rows highlighted
-- Vertical column headers for compact layout
-- Sticky row and column headers for scrolling
-- Self-connections marked with ● symbol
-- Hover zoom effect on cells
-- Connected cells show LQI value, unconnected show ·
+#### Grid / Routing Table (Homey Developer Tools inspired)
+- Device list table with columns: #, Device, Route, LQI (Zigbee), Neighbors, Area
+- Route visualization — hop chain with pill badges showing path to coordinator/controller
+- Direct connections marked with green `→ Direct` badge
+- Multi-hop routes shown as `📡 Router → ⭐ Coordinator` chain
+- LQI column with color-coded pill badges (green = good, red = poor) — Zigbee only
+- Neighbor list with compact badges showing connected device IDs/names
+- Device icon with type-colored border and manufacturer/model subtitle
+- Coordinator/controller rows highlighted with accent background
+- Sticky header for scrolling
+- Row hover highlight
+- Protocol-aware columns (LQI shown only for Zigbee tab)
 
 ### Changelog
 

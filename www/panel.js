@@ -59,18 +59,26 @@ const NV_CSS = `
 .node-label{font-size:10px;fill:var(--nv-text);text-anchor:middle;pointer-events:none;user-select:none}
 .link-label{font-size:9px;fill:var(--nv-text-dim);text-anchor:middle;pointer-events:none}
 .hull{fill-opacity:.08;stroke-opacity:.3;stroke-width:1.5}
-.nv-grid-wrap{width:100%;height:100%;overflow:auto;background:var(--nv-bg)}
-.nv-matrix{border-collapse:collapse;font-size:11px;min-width:100%}
-.nv-matrix th,.nv-matrix td{border:1px solid var(--nv-border);padding:4px 6px;text-align:center;white-space:nowrap}
-.nv-matrix th{background:var(--nv-surface);color:var(--nv-text);position:sticky;top:0;z-index:2;font-weight:500}
-.nv-matrix th.row-header{position:sticky;left:0;z-index:3;text-align:right;background:var(--nv-surface)}
-.nv-matrix th.corner{position:sticky;top:0;left:0;z-index:4;background:var(--nv-surface)}
-.nv-matrix td{cursor:default;min-width:36px;font-size:10px;font-weight:600;transition:transform .1s}
-.nv-matrix td:hover{transform:scale(1.3);z-index:1;position:relative}
-.nv-matrix td.self{background:#1a1a2e;color:#444}
-.nv-matrix td.connected{color:#fff}
-.nv-matrix td.no-link{background:rgba(255,255,255,.02);color:#333}
-.nv-matrix .coord-row th.row-header{color:var(--nv-primary);font-weight:700}
+.nv-grid-wrap{width:100%;height:100%;overflow:auto;background:var(--nv-bg);padding:8px}
+.nv-rtable{border-collapse:separate;border-spacing:0;font-size:12px;width:100%}
+.nv-rtable thead th{position:sticky;top:0;z-index:2;background:var(--nv-surface);color:var(--nv-text-dim);font-weight:600;padding:8px 10px;text-align:left;border-bottom:2px solid var(--nv-border);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.nv-rtable tbody tr{transition:background .15s}
+.nv-rtable tbody tr:hover{background:rgba(79,195,247,.08)}
+.nv-rtable tbody tr.coord-row{background:rgba(255,152,0,.06)}
+.nv-rtable td{padding:6px 10px;border-bottom:1px solid var(--nv-border);vertical-align:middle}
+.nv-rtable .rt-id{color:var(--nv-text-dim);font-size:11px;font-weight:600;min-width:32px;text-align:center}
+.nv-rtable .rt-device{display:flex;align-items:center;gap:8px}
+.nv-rtable .rt-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.nv-rtable .rt-name{font-weight:500;color:var(--nv-text)}
+.nv-rtable .rt-model{font-size:10px;color:var(--nv-text-dim)}
+.nv-rtable .rt-route{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.nv-rtable .rt-hop{display:inline-flex;align-items:center;gap:2px;background:var(--nv-surface);border:1px solid var(--nv-border);border-radius:12px;padding:2px 8px;font-size:10px;white-space:nowrap}
+.nv-rtable .rt-hop.direct{border-color:var(--nv-accent);color:var(--nv-accent)}
+.nv-rtable .rt-arrow{color:var(--nv-text-dim);font-size:10px}
+.nv-rtable .rt-lqi{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;min-width:36px;text-align:center}
+.nv-rtable .rt-neighbors{font-size:11px;color:var(--nv-text-dim)}
+.nv-rtable .rt-nbr-badge{display:inline-block;background:var(--nv-surface);border:1px solid var(--nv-border);border-radius:4px;padding:1px 4px;font-size:9px;margin:1px}
+.nv-rtable .rt-area{font-size:11px;color:var(--nv-text-dim);font-style:italic}
 `;
 
 /* ── Constants ────────────────────────────────────────── */
@@ -416,103 +424,147 @@ class OrganicGraphRenderer {
   destroy() { this.sim?.stop(); this.container.innerHTML = ''; }
 }
 
-/* ── GridMatrixRenderer ───────────────────────────────── */
+/* ── GridMatrixRenderer (Homey-style Routing Table) ───── */
 class GridMatrixRenderer {
   constructor(container, opts = {}) {
     this.container = container; this.opts = opts;
-    this._nodes = []; this._links = []; this._highlighted = null;
+    this._nodes = []; this._links = []; this._rows = null;
   }
   init(nodes, links) {
     this._nodes = nodes; this._links = links;
     this.container.innerHTML = '';
-    // Build adjacency map
-    const adj = {};
+    const isZigbee = nodes.some(n => n.protocol === 'zigbee');
+    const nodeMap = {}; nodes.forEach(n => nodeMap[n.id] = n);
+    // Build neighbor map
+    const nbrs = {};
+    nodes.forEach(n => nbrs[n.id] = new Set());
     links.forEach(l => {
-      const key = l.source + '|' + l.target;
-      const keyR = l.target + '|' + l.source;
-      adj[key] = l.lqi; adj[keyR] = l.lqi;
+      if (nbrs[l.source]) nbrs[l.source].add(l.target);
+      if (nbrs[l.target]) nbrs[l.target].add(l.source);
     });
-    // Sort: coordinator/controller first, then by name
+    // Build parent map for route tracing (target's parent = source)
+    const parentMap = {};
+    links.forEach(l => { parentMap[l.target] = { id: l.source, lqi: l.lqi }; });
+    const traceRoute = (nid) => {
+      const route = []; let cur = nid; const vis = new Set();
+      while (parentMap[cur] && !vis.has(cur)) {
+        vis.add(cur); route.push(parentMap[cur].id); cur = parentMap[cur].id;
+      }
+      return route;
+    };
+    // Sort: coordinator/controller first, then by nodeId or name
     const sorted = [...nodes].sort((a, b) => {
-      const aCoord = (a.type === 'coordinator' || a.type === 'controller') ? 0 : 1;
-      const bCoord = (b.type === 'coordinator' || b.type === 'controller') ? 0 : 1;
-      if (aCoord !== bCoord) return aCoord - bCoord;
+      const ac = (a.type === 'coordinator' || a.type === 'controller') ? 0 : 1;
+      const bc = (b.type === 'coordinator' || b.type === 'controller') ? 0 : 1;
+      if (ac !== bc) return ac - bc;
+      if (a.nodeId != null && b.nodeId != null) return a.nodeId - b.nodeId;
       return a.name.localeCompare(b.name);
     });
+    // Build table
     const wrap = document.createElement('div');
     wrap.className = 'nv-grid-wrap';
     const table = document.createElement('table');
-    table.className = 'nv-matrix';
-    // Header row
+    table.className = 'nv-rtable';
+    // Header
     const thead = document.createElement('thead');
     const hRow = document.createElement('tr');
-    const corner = document.createElement('th');
-    corner.className = 'corner';
-    corner.textContent = '↘';
-    hRow.appendChild(corner);
-    sorted.forEach(n => {
-      const th = document.createElement('th');
-      const short = n.name.length > 12 ? n.name.slice(0, 10) + '…' : n.name;
-      th.textContent = short;
-      th.title = n.name + (n.type ? ' (' + n.type + ')' : '');
-      th.style.color = (NODE_COLORS[n.type] || NODE_COLORS.node).fill;
-      th.style.fontSize = '9px';
-      th.style.writingMode = 'vertical-lr';
-      th.style.textOrientation = 'mixed';
-      th.style.maxHeight = '120px';
-      hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-    table.appendChild(thead);
-    // Body rows
+    const cols = ['#', 'Device', 'Route'];
+    if (isZigbee) cols.push('LQI');
+    cols.push('Neighbors', 'Area');
+    cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hRow.appendChild(th); });
+    thead.appendChild(hRow); table.appendChild(thead);
+    // Body
     const tbody = document.createElement('tbody');
-    sorted.forEach(row => {
+    sorted.forEach((node, idx) => {
       const tr = document.createElement('tr');
-      if (row.type === 'coordinator' || row.type === 'controller') tr.className = 'coord-row';
-      const rowH = document.createElement('th');
-      rowH.className = 'row-header';
-      const icon = (NODE_COLORS[row.type] || NODE_COLORS.node).icon;
-      rowH.innerHTML = icon + ' ' + (row.name.length > 18 ? row.name.slice(0, 16) + '…' : row.name);
-      rowH.title = row.name + ' (' + row.type + ')' + (row.area ? ' — ' + row.area : '');
-      tr.appendChild(rowH);
-      sorted.forEach(col => {
-        const td = document.createElement('td');
-        if (row.id === col.id) {
-          td.className = 'self';
-          td.textContent = '●';
+      tr.dataset.nodeId = node.id;
+      if (node.type === 'coordinator' || node.type === 'controller') tr.className = 'coord-row';
+      // # column
+      const tdId = document.createElement('td'); tdId.className = 'rt-id';
+      tdId.textContent = node.nodeId != null ? node.nodeId : (idx + 1);
+      tr.appendChild(tdId);
+      // Device column
+      const tdDev = document.createElement('td');
+      const devDiv = document.createElement('div'); devDiv.className = 'rt-device';
+      const iconSpan = document.createElement('span'); iconSpan.className = 'rt-icon';
+      const nc = NODE_COLORS[node.type] || NODE_COLORS.node;
+      iconSpan.style.background = nc.fill + '33'; iconSpan.style.border = '2px solid ' + nc.fill;
+      iconSpan.textContent = nc.icon;
+      devDiv.appendChild(iconSpan);
+      const infoDiv = document.createElement('div');
+      const nameDiv = document.createElement('div'); nameDiv.className = 'rt-name';
+      nameDiv.textContent = node.name; infoDiv.appendChild(nameDiv);
+      if (node.manufacturer || node.model) {
+        const modelDiv = document.createElement('div'); modelDiv.className = 'rt-model';
+        modelDiv.textContent = [node.manufacturer, node.model].filter(Boolean).join(' — ');
+        infoDiv.appendChild(modelDiv);
+      }
+      devDiv.appendChild(infoDiv); tdDev.appendChild(devDiv); tr.appendChild(tdDev);
+      // Route column
+      const tdRoute = document.createElement('td');
+      const routeDiv = document.createElement('div'); routeDiv.className = 'rt-route';
+      if (node.type === 'coordinator' || node.type === 'controller') {
+        const b = document.createElement('span'); b.className = 'rt-hop direct'; b.textContent = '● Base';
+        routeDiv.appendChild(b);
+      } else {
+        const route = traceRoute(node.id);
+        if (route.length === 0) {
+          const b = document.createElement('span'); b.className = 'rt-hop';
+          b.textContent = '? Unknown'; b.style.borderColor = '#f44336'; b.style.color = '#f44336';
+          routeDiv.appendChild(b);
+        } else if (route.length === 1 && (nodeMap[route[0]]?.type === 'coordinator' || nodeMap[route[0]]?.type === 'controller')) {
+          const b = document.createElement('span'); b.className = 'rt-hop direct'; b.textContent = '→ Direct';
+          routeDiv.appendChild(b);
         } else {
-          const key = row.id + '|' + col.id;
-          const lqi = adj[key];
-          if (lqi !== undefined) {
-            td.className = 'connected';
-            td.textContent = lqi != null ? lqi : '✓';
-            td.style.background = lqi != null ? lqiColor(lqi) + '44' : 'rgba(79,195,247,0.2)';
-            td.title = row.name + ' ↔ ' + col.name + (lqi != null ? ' (LQI: ' + lqi + ')' : '');
-          } else {
-            td.className = 'no-link';
-            td.textContent = '·';
-          }
+          route.forEach((hopId, i) => {
+            if (i > 0) { const ar = document.createElement('span'); ar.className = 'rt-arrow'; ar.textContent = '→'; routeDiv.appendChild(ar); }
+            const hop = nodeMap[hopId]; const hnc = NODE_COLORS[hop?.type] || NODE_COLORS.node;
+            const b = document.createElement('span'); b.className = 'rt-hop';
+            b.style.borderColor = hnc.fill; b.style.color = hnc.fill;
+            const hn = hop ? (hop.name.length > 14 ? hop.name.slice(0,12)+'…' : hop.name) : hopId;
+            b.textContent = hnc.icon + ' ' + hn;
+            routeDiv.appendChild(b);
+          });
         }
-        tr.appendChild(td);
-      });
+      }
+      tdRoute.appendChild(routeDiv); tr.appendChild(tdRoute);
+      // LQI column (Zigbee only)
+      if (isZigbee) {
+        const tdLqi = document.createElement('td');
+        if (node.lqi != null) {
+          const lb = document.createElement('span'); lb.className = 'rt-lqi';
+          lb.textContent = node.lqi; lb.style.background = lqiColor(node.lqi) + '33';
+          lb.style.color = lqiColor(node.lqi); lb.style.border = '1px solid ' + lqiColor(node.lqi);
+          tdLqi.appendChild(lb);
+        } else { tdLqi.style.color = 'var(--nv-text-dim)'; tdLqi.textContent = node.type === 'coordinator' ? '—' : 'N/A'; }
+        tr.appendChild(tdLqi);
+      }
+      // Neighbors column
+      const tdNbr = document.createElement('td');
+      const nbrSet = nbrs[node.id] || new Set();
+      if (nbrSet.size > 0) {
+        const cs = document.createElement('span'); cs.className = 'rt-neighbors';
+        cs.textContent = nbrSet.size + ' '; tdNbr.appendChild(cs);
+        [...nbrSet].slice(0, 6).forEach(nid => {
+          const nb = nodeMap[nid]; const badge = document.createElement('span'); badge.className = 'rt-nbr-badge';
+          badge.textContent = nb ? (nb.nodeId != null ? '#' + nb.nodeId : nb.name.slice(0,8)) : String(nid).slice(0,6);
+          badge.title = nb?.name || nid; tdNbr.appendChild(badge);
+        });
+        if (nbrSet.size > 6) { const m = document.createElement('span'); m.className = 'rt-nbr-badge'; m.textContent = '+' + (nbrSet.size-6); tdNbr.appendChild(m); }
+      } else { tdNbr.style.color = 'var(--nv-text-dim)'; tdNbr.textContent = '—'; }
+      tr.appendChild(tdNbr);
+      // Area column
+      const tdArea = document.createElement('td'); tdArea.className = 'rt-area';
+      tdArea.textContent = node.area || '—'; tr.appendChild(tdArea);
       tbody.appendChild(tr);
     });
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    this.container.appendChild(wrap);
-    this._wrap = wrap;
-    this._rows = tbody.querySelectorAll('tr');
+    table.appendChild(tbody); wrap.appendChild(table); this.container.appendChild(wrap);
+    this._wrap = wrap; this._rows = tbody.querySelectorAll('tr');
   }
   highlightNode(nodeId) {
-    this._highlighted = nodeId;
-    const idx = this._nodes.findIndex(n => n.id === nodeId);
-    this._rows?.forEach(tr => { tr.style.opacity = '0.3'; });
-    if (idx >= 0 && this._rows?.[idx]) this._rows[idx].style.opacity = '1';
+    this._rows?.forEach(tr => { tr.style.opacity = tr.dataset.nodeId === nodeId ? '1' : '0.3'; });
   }
-  clearHighlight() {
-    this._highlighted = null;
-    this._rows?.forEach(tr => { tr.style.opacity = '1'; });
-  }
+  clearHighlight() { this._rows?.forEach(tr => { tr.style.opacity = '1'; }); }
   resetZoom() {}
   zoomIn() {}
   zoomOut() {}
