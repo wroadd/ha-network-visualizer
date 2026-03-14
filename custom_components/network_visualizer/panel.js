@@ -482,7 +482,8 @@ class GridMatrixRenderer {
       const badge = document.createElement('div');
       badge.className = 'nv-node-badge';
       badge.style.background = badgeColor(idx);
-      badge.textContent = node.nodeId != null ? node.nodeId : (idx + 1);
+      badge.textContent = idx + 1;
+      if (node.nodeId != null) badge.title = `Node ID: ${node.nodeId}`;
       nid.appendChild(badge);
       row.appendChild(nid);
       // Device
@@ -512,8 +513,8 @@ class GridMatrixRenderer {
             const rb = document.createElement('div');
             rb.className = 'nv-route-badge';
             rb.style.background = badgeColor(hopIdx);
-            rb.textContent = hopNode?.nodeId != null ? hopNode.nodeId : (hopIdx + 1);
-            rb.title = hopNode?.name || hopId;
+            rb.textContent = (hopIdx ?? 0) + 1;
+            rb.title = (hopNode?.nodeId != null ? `Node ID: ${hopNode.nodeId} — ` : '') + (hopNode?.name || hopId);
             rtCell.appendChild(rb);
           });
         }
