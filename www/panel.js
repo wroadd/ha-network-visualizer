@@ -948,7 +948,7 @@ class NetworkVisualizerPanel extends HTMLElement {
       // Subscribe to response
       const result = await new Promise((resolve, reject) => {
         let unsub = null;
-        const timeout = setTimeout(() => { unsub?.(); reject(new Error('Scan timeout (2 min)')); }, 120000);
+        const timeout = setTimeout(() => { unsub?.(); reject(new Error('Scan timeout (5 min)')); }, 300000);
         this._hass.connection.subscribeMessage(
           (msg) => {
             clearTimeout(timeout);
@@ -1066,4 +1066,6 @@ class NetworkVisualizerPanel extends HTMLElement {
 }
 
 /* ── Registration ─────────────────────────────────────── */
-customElements.define('network-visualizer', NetworkVisualizerPanel);
+if (!customElements.get('network-visualizer')) {
+  customElements.define('network-visualizer', NetworkVisualizerPanel);
+}
