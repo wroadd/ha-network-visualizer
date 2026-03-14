@@ -110,6 +110,10 @@ const STOR = {
   TOPOLOGY: 'nv3_topology',
 };
 
+const WS = {
+  GET_TOPOLOGY: 'network_visualizer/get_topology',
+};
+
 const NODE_COLORS = {
   coordinator: { fill: '#ff9800', stroke: '#e65100', icon: '⭐' },
   router: { fill: '#4fc3f7', stroke: '#0288d1', icon: '📡' },
@@ -627,16 +631,32 @@ class NetworkVisualizerPanel extends HTMLElement {
     if (this._settings.graphType) this._activeGraphType = this._settings.graphType;
     this._logs = [];
     this._logOpen = false;
+    this._backendTopology = null;
+    this._scanStatus = null;
+    this._statusPollTimer = null;
   }
 
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
-    if (first) { this._render(); this._loadData(); }
+    if (first) {
+      this._render();
+      this._loadData();
+      this._startBackendStatusPolling();
+    }
   }
 
-  connectedCallback() { if (this._hass) { this._render(); this._loadData(); } }
-  disconnectedCallback() { this._renderer?.destroy(); }
+  connectedCallback() {
+    if (this._hass) {
+      this._render();
+      this._loadData();
+      this._startBackendStatusPolling();
+    }
+  }
+  disconnectedCallback() {
+    this._renderer?.destroy();
+    this._stopBackendStatusPolling();
+  }
 
   _render() {
     const s = this.shadowRoot;
@@ -722,6 +742,7 @@ class NetworkVisualizerPanel extends HTMLElement {
   async _loadData() {
     this._log('info', 'Loading device data from Home Assistant…');
     try {
+      await this._fetchBackendTopology();
       const [devices, entities, states] = await Promise.all([
         this._hass.callWS({ type: 'config/device_registry/list' }),
         this._hass.callWS({ type: 'config/entity_registry/list' }),
@@ -762,7 +783,7 @@ class NetworkVisualizerPanel extends HTMLElement {
         });
       });
       // Build Zigbee links — use cached topology if available, else heuristic fallback
-      const cachedTopo = loadStore(STOR.TOPOLOGY);
+      const cachedTopo = this._backendTopology || loadStore(STOR.TOPOLOGY);
       const zigbeeNodes = nodes.filter(n => n.protocol === 'zigbee');
       if (cachedTopo.zigbeeLinks && cachedTopo.zigbeeLinks.length > 0) {
         // Use real topology from scan
@@ -936,79 +957,75 @@ class NetworkVisualizerPanel extends HTMLElement {
     }
     scanBtn.classList.add('scanning');
     scanBtn.querySelector('.scan-icon').textContent = '⏳';
-    if (statusEl) statusEl.textContent = 'Scanning…';
-    this._log('info', 'Starting Zigbee topology scan…');
+    if (statusEl) statusEl.textContent = 'Scan request sent…';
+    this._log('info', 'Starting backend Zigbee topology scan service…');
     try {
-      // Get Z2M base topic from config (default: zigbee2mqtt)
-      const z2mTopic = this._hass?.config?.components?.includes?.('mqtt') ? 'zigbee2mqtt' : 'zigbee2mqtt';
-      const responseTopic = `${z2mTopic}/bridge/response/networkmap`;
-      const requestTopic = `${z2mTopic}/bridge/request/networkmap`;
-      this._log('info', `MQTT subscribe: ${responseTopic}`);
-      this._log('info', `MQTT publish: ${requestTopic} → {type:"raw",routes:true}`);
-      // Subscribe to response
-      const result = await new Promise((resolve, reject) => {
-        let unsub = null;
-        const timeout = setTimeout(() => { unsub?.(); reject(new Error('Scan timeout (5 min)')); }, 300000);
-        this._hass.connection.subscribeMessage(
-          (msg) => {
-            clearTimeout(timeout);
-            unsub?.();
-            resolve(msg);
-          },
-          { type: 'mqtt/subscribe', topic: responseTopic }
-        ).then(u => { unsub = u; });
-        // Publish scan request
-        setTimeout(() => {
-          this._hass.callService('mqtt', 'publish', {
-            topic: requestTopic,
-            payload: JSON.stringify({ type: 'raw', routes: true }),
-          }).catch(reject);
-        }, 500);
-      });
-      // Parse the response
-      this._log('info', 'Received MQTT response, parsing…');
-      const payload = typeof result.payload === 'string' ? JSON.parse(result.payload) : result.payload;
-      this._log('debug', `Response status: ${payload.status}, has data.value: ${!!payload.data?.value}`);
-      if (payload.status !== 'ok' || !payload.data?.value) throw new Error(payload.error || 'Invalid response');
-      const raw = payload.data.value;
-      // Build links and neighbors from raw data
-      const zigbeeLinks = [];
-      const zigbeeNeighbors = {};
-      if (raw.links && Array.isArray(raw.links)) {
-        raw.links.forEach(l => {
-          const src = l.source?.ieee_address;
-          const tgt = l.target?.ieee_address;
-          if (src && tgt) {
-            zigbeeLinks.push({ source: src, target: tgt, lqi: l.lqi ?? null, depth: l.depth ?? null, relationship: l.relationship ?? null });
-          }
-        });
-      }
-      if (raw.nodes && Array.isArray(raw.nodes)) {
-        raw.nodes.forEach(n => {
-          if (n.ieee_address && n.neighbors) {
-            zigbeeNeighbors[n.ieee_address.toLowerCase()] = n.neighbors.map(nb => ({
-              ieee: nb.ieee_address, lqi: nb.lqi, relationship: nb.relationship, depth: nb.depth,
-            }));
-          }
-        });
-      }
-      // Cache
-      const topo = loadStore(STOR.TOPOLOGY);
-      topo.zigbeeLinks = zigbeeLinks;
-      topo.zigbeeNeighbors = zigbeeNeighbors;
-      topo.zigbeeScanTime = Date.now();
-      saveStore(STOR.TOPOLOGY, topo);
-      if (statusEl) statusEl.textContent = `✅ ${zigbeeLinks.length} links found`;
-      this._log('success', `Scan complete: ${zigbeeLinks.length} links, ${Object.keys(zigbeeNeighbors).length} nodes with neighbors`);
-      // Reload data to use new topology
-      await this._loadData();
+      await this._hass.callService('network_visualizer', 'scan_zigbee_topology', {});
+      if (statusEl) statusEl.textContent = 'Scanning in background…';
+      this._log('info', 'Background scan started. You can navigate away; scan will continue.');
+      await this._fetchBackendTopology();
     } catch (err) {
       this._log('error', `Scan error: ${err.message}`);
       if (statusEl) statusEl.textContent = `❌ ${err.message}`;
     } finally {
       scanBtn.classList.remove('scanning');
       scanBtn.querySelector('.scan-icon').textContent = '📡';
-      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 8000);
+      setTimeout(() => { if (statusEl && !this._scanStatus?.running) statusEl.textContent = ''; }, 8000);
+    }
+  }
+
+  _startBackendStatusPolling() {
+    this._stopBackendStatusPolling();
+    this._fetchBackendTopology();
+    this._statusPollTimer = setInterval(() => this._fetchBackendTopology(), 10000);
+  }
+
+  _stopBackendStatusPolling() {
+    if (this._statusPollTimer) {
+      clearInterval(this._statusPollTimer);
+      this._statusPollTimer = null;
+    }
+  }
+
+  async _fetchBackendTopology() {
+    if (!this._hass) return;
+    try {
+      const res = await this._hass.callWS({ type: WS.GET_TOPOLOGY });
+      if (res?.topology) {
+        this._backendTopology = res.topology;
+      }
+      if (res?.scan_status) {
+        const prevRunning = this._scanStatus?.running;
+        this._scanStatus = res.scan_status;
+        this._updateScanStatusUI();
+        if (prevRunning && !this._scanStatus.running) {
+          if (this._scanStatus.last_error) {
+            this._log('error', `Background scan failed: ${this._scanStatus.last_error}`);
+          } else if (this._scanStatus.last_result) {
+            this._log('success', `Background scan complete: ${this._scanStatus.last_result.links} links`);
+            await this._loadData();
+          }
+        }
+      }
+    } catch (err) {
+      // WS command may not exist on old backend, keep local fallback silently
+    }
+  }
+
+  _updateScanStatusUI() {
+    const statusEl = this.shadowRoot?.querySelector('.nv-scan-status');
+    if (!statusEl || !this._scanStatus) return;
+    if (this._scanStatus.running) {
+      statusEl.textContent = 'Scanning in background…';
+      return;
+    }
+    if (this._scanStatus.last_error) {
+      statusEl.textContent = `❌ ${this._scanStatus.last_error}`;
+      return;
+    }
+    if (this._scanStatus.last_result) {
+      statusEl.textContent = `✅ ${this._scanStatus.last_result.links} links found`;
+      return;
     }
   }
 

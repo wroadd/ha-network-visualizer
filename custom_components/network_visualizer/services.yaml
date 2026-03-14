@@ -1,0 +1,11 @@
+scan_zigbee_topology:
+  name: Scan Zigbee topology
+  description: Start background Zigbee2MQTT network map scan and store the result for the visualizer.
+  fields:
+    force:
+      name: Force
+      description: If true, request scan start even if recently scanned.
+      required: false
+      default: false
+      selector:
+        boolean:

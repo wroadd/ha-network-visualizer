@@ -1,0 +1,23 @@
+blueprint:
+  name: Network Visualizer - Daily Zigbee topology scan
+  description: >-
+    Runs network_visualizer.scan_zigbee_topology on a schedule so topology is refreshed
+    in the background (without opening the panel).
+  domain: automation
+  input:
+    run_time:
+      name: Run time
+      description: Daily time when the Zigbee topology scan should run.
+      selector:
+        time: {}
+
+mode: single
+
+trigger:
+  - platform: time
+    at: !input run_time
+
+action:
+  - service: network_visualizer.scan_zigbee_topology
+    data:
+      force: true

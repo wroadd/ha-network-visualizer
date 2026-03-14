@@ -20,6 +20,9 @@ Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQ
 - **Dark theme** — built-in dark UI
 - **Click to highlight** — selected device and its connections highlighted
 - **Persistent settings** — active tab and graph type saved in localStorage
+- **Background Zigbee scan** — scan runs in backend (continues even if panel is closed)
+- **Persistent backend topology cache** — latest topology is stored by the integration and reused on panel load
+- **Daily automation blueprint** — schedule automatic daily topology scans
 
 ### Graph Types
 
@@ -143,6 +146,35 @@ The visualizer requires Z2M to have bridge/devices and networkmap messages enabl
 advanced:
   log_level: info
 # Networkmap request is triggered automatically from the integration
+```
+
+## Background Scan & Automation
+
+From v3.0.0+, Zigbee network map scan is executed in the **integration backend**:
+
+- Panel **Scan** button calls `network_visualizer.scan_zigbee_topology`
+- Scan continues even if user navigates away/closes the panel
+- Result is stored in integration storage and loaded automatically on next open
+
+### Service
+
+`network_visualizer.scan_zigbee_topology`
+
+Optional fields:
+- `force` (`bool`, default: `false`)
+
+### Blueprint (daily refresh)
+
+Blueprint file:
+
+`blueprints/automation/network_visualizer/daily_zigbee_topology_scan.yaml`
+
+Import it in Home Assistant and set the daily run time. The blueprint calls:
+
+```yaml
+service: network_visualizer.scan_zigbee_topology
+data:
+  force: true
 ```
 
 ## Structure
