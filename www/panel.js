@@ -2,7 +2,7 @@
  * Zigbee & Z-Wave Network Visualizer Panel
  * Home Assistant Custom Panel — v3.0.0
  *
- * Three graph types: Force (MeshGraphViewer), Radial (Alarm.com), Organic (Homey)
+ * Four graph types: Force (MeshGraphViewer), Radial (Alarm.com), Organic (Homey), Grid (Routing Matrix)
  * Separate Zigbee / Z-Wave tabs
  */
 
@@ -59,6 +59,18 @@ const NV_CSS = `
 .node-label{font-size:10px;fill:var(--nv-text);text-anchor:middle;pointer-events:none;user-select:none}
 .link-label{font-size:9px;fill:var(--nv-text-dim);text-anchor:middle;pointer-events:none}
 .hull{fill-opacity:.08;stroke-opacity:.3;stroke-width:1.5}
+.nv-grid-wrap{width:100%;height:100%;overflow:auto;background:var(--nv-bg)}
+.nv-matrix{border-collapse:collapse;font-size:11px;min-width:100%}
+.nv-matrix th,.nv-matrix td{border:1px solid var(--nv-border);padding:4px 6px;text-align:center;white-space:nowrap}
+.nv-matrix th{background:var(--nv-surface);color:var(--nv-text);position:sticky;top:0;z-index:2;font-weight:500}
+.nv-matrix th.row-header{position:sticky;left:0;z-index:3;text-align:right;background:var(--nv-surface)}
+.nv-matrix th.corner{position:sticky;top:0;left:0;z-index:4;background:var(--nv-surface)}
+.nv-matrix td{cursor:default;min-width:36px;font-size:10px;font-weight:600;transition:transform .1s}
+.nv-matrix td:hover{transform:scale(1.3);z-index:1;position:relative}
+.nv-matrix td.self{background:#1a1a2e;color:#444}
+.nv-matrix td.connected{color:#fff}
+.nv-matrix td.no-link{background:rgba(255,255,255,.02);color:#333}
+.nv-matrix .coord-row th.row-header{color:var(--nv-primary);font-weight:700}
 `;
 
 /* ── Constants ────────────────────────────────────────── */
@@ -404,6 +416,109 @@ class OrganicGraphRenderer {
   destroy() { this.sim?.stop(); this.container.innerHTML = ''; }
 }
 
+/* ── GridMatrixRenderer ───────────────────────────────── */
+class GridMatrixRenderer {
+  constructor(container, opts = {}) {
+    this.container = container; this.opts = opts;
+    this._nodes = []; this._links = []; this._highlighted = null;
+  }
+  init(nodes, links) {
+    this._nodes = nodes; this._links = links;
+    this.container.innerHTML = '';
+    // Build adjacency map
+    const adj = {};
+    links.forEach(l => {
+      const key = l.source + '|' + l.target;
+      const keyR = l.target + '|' + l.source;
+      adj[key] = l.lqi; adj[keyR] = l.lqi;
+    });
+    // Sort: coordinator/controller first, then by name
+    const sorted = [...nodes].sort((a, b) => {
+      const aCoord = (a.type === 'coordinator' || a.type === 'controller') ? 0 : 1;
+      const bCoord = (b.type === 'coordinator' || b.type === 'controller') ? 0 : 1;
+      if (aCoord !== bCoord) return aCoord - bCoord;
+      return a.name.localeCompare(b.name);
+    });
+    const wrap = document.createElement('div');
+    wrap.className = 'nv-grid-wrap';
+    const table = document.createElement('table');
+    table.className = 'nv-matrix';
+    // Header row
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    const corner = document.createElement('th');
+    corner.className = 'corner';
+    corner.textContent = '↘';
+    hRow.appendChild(corner);
+    sorted.forEach(n => {
+      const th = document.createElement('th');
+      const short = n.name.length > 12 ? n.name.slice(0, 10) + '…' : n.name;
+      th.textContent = short;
+      th.title = n.name + (n.type ? ' (' + n.type + ')' : '');
+      th.style.color = (NODE_COLORS[n.type] || NODE_COLORS.node).fill;
+      th.style.fontSize = '9px';
+      th.style.writingMode = 'vertical-lr';
+      th.style.textOrientation = 'mixed';
+      th.style.maxHeight = '120px';
+      hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+    table.appendChild(thead);
+    // Body rows
+    const tbody = document.createElement('tbody');
+    sorted.forEach(row => {
+      const tr = document.createElement('tr');
+      if (row.type === 'coordinator' || row.type === 'controller') tr.className = 'coord-row';
+      const rowH = document.createElement('th');
+      rowH.className = 'row-header';
+      const icon = (NODE_COLORS[row.type] || NODE_COLORS.node).icon;
+      rowH.innerHTML = icon + ' ' + (row.name.length > 18 ? row.name.slice(0, 16) + '…' : row.name);
+      rowH.title = row.name + ' (' + row.type + ')' + (row.area ? ' — ' + row.area : '');
+      tr.appendChild(rowH);
+      sorted.forEach(col => {
+        const td = document.createElement('td');
+        if (row.id === col.id) {
+          td.className = 'self';
+          td.textContent = '●';
+        } else {
+          const key = row.id + '|' + col.id;
+          const lqi = adj[key];
+          if (lqi !== undefined) {
+            td.className = 'connected';
+            td.textContent = lqi != null ? lqi : '✓';
+            td.style.background = lqi != null ? lqiColor(lqi) + '44' : 'rgba(79,195,247,0.2)';
+            td.title = row.name + ' ↔ ' + col.name + (lqi != null ? ' (LQI: ' + lqi + ')' : '');
+          } else {
+            td.className = 'no-link';
+            td.textContent = '·';
+          }
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    this.container.appendChild(wrap);
+    this._wrap = wrap;
+    this._rows = tbody.querySelectorAll('tr');
+  }
+  highlightNode(nodeId) {
+    this._highlighted = nodeId;
+    const idx = this._nodes.findIndex(n => n.id === nodeId);
+    this._rows?.forEach(tr => { tr.style.opacity = '0.3'; });
+    if (idx >= 0 && this._rows?.[idx]) this._rows[idx].style.opacity = '1';
+  }
+  clearHighlight() {
+    this._highlighted = null;
+    this._rows?.forEach(tr => { tr.style.opacity = '1'; });
+  }
+  resetZoom() {}
+  zoomIn() {}
+  zoomOut() {}
+  destroy() { this.container.innerHTML = ''; }
+}
+
 /* ── Main Component ───────────────────────────────────── */
 class NetworkVisualizerPanel extends HTMLElement {
   constructor() {
@@ -440,6 +555,7 @@ class NetworkVisualizerPanel extends HTMLElement {
           <button data-type="force" class="${this._activeGraphType==='force'?'active':''}">Force</button>
           <button data-type="radial" class="${this._activeGraphType==='radial'?'active':''}">Radial</button>
           <button data-type="organic" class="${this._activeGraphType==='organic'?'active':''}">Organic</button>
+          <button data-type="grid" class="${this._activeGraphType==='grid'?'active':''}">Grid</button>
         </div>
         <div class="nv-search"><input type="text" placeholder="🔍 Search..." /></div>
       </div>
@@ -607,6 +723,7 @@ class NetworkVisualizerPanel extends HTMLElement {
     };
     const Cls = this._activeGraphType === 'radial' ? RadialTreeRenderer
               : this._activeGraphType === 'organic' ? OrganicGraphRenderer
+              : this._activeGraphType === 'grid' ? GridMatrixRenderer
               : ForceGraphRenderer;
     this._renderer = new Cls(container, opts);
     this._renderer.init(nodesCopy, linksCopy);

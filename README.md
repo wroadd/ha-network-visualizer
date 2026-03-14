@@ -7,9 +7,9 @@ Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQ
 ## Features
 
 ### Core (v3.0.0)
-- **Three graph visualization types** — Force, Radial Tree, and Organic
+- **Four graph visualization types** — Force, Radial Tree, Organic, and Grid Matrix
 - **Separate Zigbee / Z-Wave tabs** — dedicated tab for each protocol
-- **Graph type selector** — switch between Force / Radial / Organic in the header
+- **Graph type selector** — switch between Force / Radial / Organic / Grid in the header
 - **Zigbee topology** — coordinator, routers, end devices, LQI-colored links
 - **Z-Wave topology** — controller and nodes
 - **Search** — find and highlight devices by name
@@ -45,14 +45,24 @@ Home Assistant custom integration that visualizes your **Zigbee** (via Zigbee2MQ
 - Pulsing animation on coordinator/controller
 - Softer force parameters for organic feel
 
+#### Grid Matrix (Routing Table inspired)
+- Adjacency matrix table — rows and columns are devices
+- LQI values displayed in cells with color-coded backgrounds (green = good, red = poor)
+- Coordinator/controller rows highlighted
+- Vertical column headers for compact layout
+- Sticky row and column headers for scrolling
+- Self-connections marked with ● symbol
+- Hover zoom effect on cells
+- Connected cells show LQI value, unconnected show ·
+
 ### Changelog
 
 #### v3.0.0 — Complete Rewrite
-- **3 graph types**: Force (MeshGraphViewer), Radial (Alarm.com), Organic (Homey)
+- **4 graph types**: Force (MeshGraphViewer), Radial (Alarm.com), Organic (Homey), Grid (Routing Matrix)
 - **Separate Zigbee / Z-Wave tabs** (removed "All" tab)
 - **Graph type selector** in header bar
 - **Removed**: Floor plan view, settings modal, Lovelace card, D3 local bundle, event log, device list sidebar
-- **Simplified architecture**: 3 renderer classes + main Web Component (~680 lines)
+- **Simplified architecture**: 4 renderer classes + main Web Component
 - **localStorage persistence**: node positions, active tab, graph type
 
 #### v2.1.0 — Settings & Floor Plan
@@ -157,7 +167,7 @@ The `panel.js` is a self-contained Web Component (`<network-visualizer>`) that:
 - Loads D3.js v7 from CDN for graph rendering
 - Communicates via HA WebSocket API (`this._hass.callWS()`)
 - Runs in Shadow DOM (CSS isolation)
-- Contains 3 renderer classes: `ForceGraphRenderer`, `RadialTreeRenderer`, `OrganicGraphRenderer`
+- Contains 4 renderer classes: `ForceGraphRenderer`, `RadialTreeRenderer`, `OrganicGraphRenderer`, `GridMatrixRenderer`
 - Loads Zigbee devices from HA device registry (`mqtt`/`zigbee2mqtt_*` identifiers)
 - Loads Z-Wave devices from HA device registry (`zwave_js` identifiers)
 - Uses `config/area_registry/list` for room-based grouping
